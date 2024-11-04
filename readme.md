@@ -7,6 +7,9 @@
 - Python 3.6+
 - Docker
 - `neo4j` Python driver
+- Helm 3.x
+- Kubernetes 1.x
+- kubectl configured to connect to your Kubernetes cluster
 
 ## Installation
 
@@ -21,34 +24,14 @@
    pip install -r requirements.txt
    ```
 
-3. Ensure you have a Neo4j database running and accessible.
-
-```
-docker run \
-    --publish=7474:7474 --publish=7687:7687 \
-    --volume=$HOME/neo4j/data:/data \
-    --env=NEO4J_AUTH=none \
-    neo4j
-```
-
-## Deployment and Debugging
-
-### Deployment
-
-1. Make scripts executable:
-   ```zsh
-   chmod +x scripts/*.zsh
+3. Deploy Neo4j using Helm:
+   ```bash
+   helm install neo4j ./neo4j-chart
    ```
-
-2. Deploy Neo4j to Kubernetes:
-   ```zsh
-   ./scripts/deploy.zsh
-   ```
-
-3. Verify deployment:
-   ```zsh
-   kubectl get pods
-   kubectl get services
+   
+   Or use the helper script:
+   ```bash
+   ./scripts/helm-install.sh
    ```
 
 ### Debugging
@@ -62,6 +45,13 @@ docker run \
    ```zsh
    python scripts/test_connection.py [uri] [username] [password]
    ```
+   
+### Cleanup
+
+To remove Neo4j and all associated resources:
+```bash
+./scripts/helm-uninstall.sh
+```
 
 ### Common Issues and Solutions
 

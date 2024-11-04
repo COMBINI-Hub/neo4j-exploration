@@ -1,34 +1,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: neo4j
+  name: {{ include "neo4j-chart.fullname" . }}
+  labels:
+    {{- include "neo4j-chart.labels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: neo4j
+      {{- include "neo4j-chart.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: neo4j
+        {{- include "neo4j-chart.selectorLabels" . | nindent 8 }}
     spec:
       containers:
-      - name: neo4j
-        image: neo4j:5.13.0
-        ports:
-        - containerPort: 7474
-          name: browser
-        - containerPort: 7687
-          name: bolt
-        env:
-        - name: NEO4J_AUTH
-          value: neo4j/yourpassword
-        - name: NEO4J_ACCEPT_LICENSE_AGREEMENT
-          value: "yes"
-        volumeMounts:
-        - name: neo4j-data
-          mountPath: /data
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.neo4j.image.repository }}:{{ .Values.neo4j.image.tag }}"
+          imagePullPolicy: {{ .Values.neo4j.image.pullPolicy }}
+          ports:
+            - name: browser
+              containerPort: {{ .Values.neo4j.service.browser.port }}
+            - name: bolt
+              containerPort: {{ .Values.neo4j.service.bolt.port }}
+          env:
+            - name: NEO4J_AUTH
+              value: {{ .Values.neo4j.auth.username }}/{{ .Values.neo4j.auth.password }}
+            - name: NEO4J_ACCEPT_LICENSE_AGREEMENT
+              value: "yes"
+          volumeMounts:
+            - name: data
+              mountPath: /data
       volumes:
-      - name: neo4j-data
-        persistentVolumeClaim:
-          claimName: neo4j-pvc
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "neo4j-chart.fullname" . }}-pvc
