@@ -1,6 +1,6 @@
 # Knowledge Graph Creator
 
-[WIP]This project creates a knowledge graph in Neo4j from the [HALD](https://figshare.com/articles/dataset/HALD_a_human_aging_and_longevity_knowledge_graph_for_precision_gerontology_and_geroscience_analyses/22828196) dataset.
+[WIP] This project creates a knowledge graph in Neo4j from the [HALD](https://figshare.com/articles/dataset/HALD_a_human_aging_and_longevity_knowledge_graph_for_precision_gerontology_and_geroscience_analyses/22828196) dataset.
 
 ## Prerequisites
 
@@ -30,6 +30,54 @@ docker run \
     --env=NEO4J_AUTH=none \
     neo4j
 ```
+
+## Deployment and Debugging
+
+### Deployment
+
+1. Make scripts executable:
+   ```zsh
+   chmod +x scripts/*.zsh
+   ```
+
+2. Deploy Neo4j to Kubernetes:
+   ```zsh
+   ./scripts/deploy.zsh
+   ```
+
+3. Verify deployment:
+   ```zsh
+   kubectl get pods
+   kubectl get services
+   ```
+
+### Debugging
+
+1. Run the debug script to get detailed information:
+   ```zsh
+   ./scripts/debug.zsh
+   ```
+
+2. Test Neo4j connectivity:
+   ```zsh
+   python scripts/test_connection.py [uri] [username] [password]
+   ```
+
+### Common Issues and Solutions
+
+1. Pod not starting:
+   - Check pod events: `kubectl describe pod <pod-name>`
+   - Verify PVC binding: `kubectl get pvc`
+   - Check logs: `kubectl logs <pod-name>`
+
+2. Connection issues:
+   - Verify service is running: `kubectl get svc neo4j`
+   - Check firewall rules
+   - Ensure correct credentials in deployment
+
+3. Data persistence issues:
+   - Check PV/PVC status: `kubectl get pv,pvc`
+   - Verify volume mounting: `kubectl describe pod <pod-name>`
 
 ## Usage
 
