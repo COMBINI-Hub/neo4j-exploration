@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kg-client
+description: Knowledge Graph Client
+version: 0.1.0
+appVersion: "1.0.0"

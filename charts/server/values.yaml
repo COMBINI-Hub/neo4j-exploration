@@ -1,0 +1,29 @@
+server:
+  image:
+    repository: kg-server
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  neo4j:
+    auth:
+      username: neo4j
+      password: yourpassword
+    
+    persistence:
+      enabled: true
+      storageClass: standard
+      size: 10Gi
+    
+    service:
+      type: ClusterIP
+      ports:
+        browser: 7474
+        bolt: 7687
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-client-config
+data:
+  neo4j_uri: {{ .Values.client.config.neo4jUri }}
+  neo4j_username: {{ .Values.client.config.neo4jUsername }}
+  neo4j_password: {{ .Values.client.config.neo4jPassword }}

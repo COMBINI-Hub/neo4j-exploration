@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-server
+  labels:
+    app: kg-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kg-server
+  template:
+    metadata:
+      labels:
+        app: kg-server
+    spec:
+      containers:
+      - name: server
+        image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
+        imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.server.neo4j.service.ports.browser }}
+          name: browser
+        - containerPort: {{ .Values.server.neo4j.service.ports.bolt }}
+          name: bolt
+        env:
+        - name: NEO4J_AUTH
+          valueFrom:
+            configMapKeyRef:
+              name: {{ .Release.Name }}-server-config
+              key: neo4j_auth
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-server-pvc

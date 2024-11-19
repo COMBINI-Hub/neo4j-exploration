@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kg-server
+description: Knowledge Graph Server with Neo4j
+version: 0.1.0
+appVersion: "1.0.0"

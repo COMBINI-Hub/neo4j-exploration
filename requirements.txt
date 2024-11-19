@@ -1,7 +1,0 @@
-# Neo4j driver for Python
-neo4j==5.25.0
-
-# Development and testing utilities
-colorama==0.4.6
-pytest>=7.4.0
-pytest-cov>=4.1.0
