@@ -37,15 +37,8 @@ RUN chmod +x /app/start.sh
 # Neo4j Configuration
 ENV NEO4J_AUTH=neo4j/yourpassword
 ENV NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+ENV NEO4J_server_default__advertised__address=localhost
 ENV PYTHONPATH=/app:/usr/local/lib/python3.9/site-packages
 
-# Wait for Neo4j to be ready before starting FastAPI
-ENV NEO4J_URI=neo4j://localhost:7687
-ENV NEO4J_USERNAME=neo4j
-ENV NEO4J_PASSWORD=yourpassword
-
-# Expose Neo4j ports and FastAPI port
-EXPOSE 7474 7687 8080
-
-# Start Neo4j and the Python application
+# Start command
 CMD ["/app/start.sh"]

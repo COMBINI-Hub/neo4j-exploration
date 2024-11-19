@@ -13,12 +13,12 @@ done
 echo "Neo4j is ready!"
 
 # Extract username and password from NEO4J_AUTH
-IFS='/' read -r NEO4J_USERNAME NEO4J_PASSWORD <<< "${NEO4J_AUTH}"
+IFS='/' read -r username password <<< "${NEO4J_AUTH}"
 
 # Export Neo4j connection details for FastAPI
 export NEO4J_URI="neo4j://localhost:7687"
-export NEO4J_USERNAME="${NEO4J_USERNAME}"
-export NEO4J_PASSWORD="${NEO4J_PASSWORD}"
+export NEO4J_USERNAME="${username}"
+export NEO4J_PASSWORD="${password}"
 
 echo "Starting FastAPI server..."
 python3 server.py &
