@@ -12,14 +12,11 @@ app = FastAPI()
 
 # Neo4j connection configuration
 uri = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
-username = os.getenv("NEO4J_USERNAME", "neo4j")
-password = os.getenv("NEO4J_PASSWORD", "yourpassword")
-
-logger.info(f"Connecting to Neo4j at {uri} with username: {username}")
+logger.info(f"Connecting to Neo4j at {uri}")
 
 # Create Neo4j driver
 try:
-    driver = GraphDatabase.driver(uri, auth=(username, password))
+    driver = GraphDatabase.driver(uri)
     # Verify connection
     with driver.session() as session:
         result = session.run("RETURN 1")
@@ -38,9 +35,4 @@ async def health_check():
         logger.info("Health check passed")
         return {"status": "healthy"}
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    logger.info("Starting FastAPI server on port 8080")
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+        logger

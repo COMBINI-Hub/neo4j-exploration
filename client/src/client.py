@@ -12,7 +12,7 @@ class KnowledgeGraphClient:
         self.neo4j_uri = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
         self.neo4j_username = os.getenv("NEO4J_USERNAME", "neo4j")
         self.neo4j_password = os.getenv("NEO4J_PASSWORD", "yourpassword")
-        self.server_url = os.getenv("SERVER_URL", "http://localhost:8080")
+        self.server_url = os.getenv("SERVER_URL", "http://kg-server:8080")
 
     def log_status(self, message):
         print(f"{Fore.GREEN}[✓]{Style.RESET_ALL} {message}")
@@ -29,18 +29,20 @@ class KnowledgeGraphClient:
         
         for attempt in range(max_retries):
             try:
-                # Test Neo4j connection
+                # Test Neo4j connection using system database
                 driver = GraphDatabase.driver(
-                    self.neo4j_uri, 
+                    self.neo4j_uri,
                     auth=(self.neo4j_username, self.neo4j_password)
                 )
-                with driver.session() as session:
-                    self.log_status("Successfully connected to Neo4j")
-                    
-                # Test server API connection
-                response = requests.get(f"{self.server_url}/health")
-                response.raise_for_status()
-                self.log_status("Successfully connected to server API")
+                with driver.session(database="system") as session:
+                    # Query database status from system database
+                    result = session.run("SHOW DATABASE neo4j")
+                    record = result.single()
+                    if record and record["currentStatus"] == "online":
+                        self.log_status("Successfully connected to Neo4j")
+                    else:
+                        raise Exception("Database is not online")
+                driver.close()
                 
                 return True
             except Exception as e:

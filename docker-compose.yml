@@ -1,39 +1,30 @@
 services:
-  server:
-    build: 
-      context: ./server
-    container_name: kg-server
+  neo4j:
+    image: neo4j:latest
+    volumes:
+        - /$HOME/neo4j/logs:/logs
+        - /$HOME/neo4j/config:/config
+        - /$HOME/neo4j/data:/data
+        - /$HOME/neo4j/plugins:/plugins
+    environment:
+        - NEO4J_AUTH=none
     ports:
       - "7474:7474"
       - "7687:7687"
       - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    environment:
-      - NEO4J_AUTH=neo4j/yourpassword
-      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
-      - NEO4J_server_default__advertised__address=localhost
-      - PYTHONPATH=/app:/usr/local/lib/python3.9/site-packages
     networks:
       - kg-network
-    restart: unless-stopped
 
   client:
     build: 
       context: ./client
     container_name: kg-client
     environment:
-      - NEO4J_URI=neo4j://server:7687
-      - SERVER_URL=http://server:8080
-      - NEO4J_USERNAME=neo4j
-      - NEO4J_PASSWORD=yourpassword
+      - NEO4J_URI=neo4j://neo4jexploration-neo4j-1:7687  # Updated container name
+      - SERVER_URL=http://neo4jexploration-neo4j-1:7474  # Updated container name
     depends_on:
-      server:
-        condition: service_healthy
+      neo4j:
+        condition: service_started
     networks:
       - kg-network
 
