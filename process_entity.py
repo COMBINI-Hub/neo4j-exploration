@@ -1,25 +1,28 @@
 import csv
 import re
 
-def convert_to_csv(input_file, output_file):
-    # Read the input file
-    with open(input_file, 'r') as f:
-        content = f.read()
-    
-    # Find all matches between parentheses using regex
-    pattern = r'\((.*?)\)'
-    matches = re.findall(pattern, content)
-    
-    # Write to CSV file
-    with open(output_file, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL)
-        for match in matches:
-            # Split the line by comma and strip whitespace
-            row = [field.strip() for field in match.split(',')]
-            writer.writerow(row)
+# File paths
+sql_file = "data/semmedVER43_2024_R_ENTITY.sql"  # Path to your .sql file
+output_csv = "ENTITY.csv"   # Desired CSV file name
 
-# Usage
-input_file = 'demo_data/entity.txt'  # Replace with your input file name
-output_file = 'entity.csv'          # Replace with desired output file name
+# Open the SQL file for reading
+with open(sql_file, "r") as file:
+    # Open the CSV file for writing
+    with open(output_csv, "w", newline="") as csvfile:
+        csv_writer = csv.writer(csvfile)
 
-convert_to_csv(input_file, output_file)
+        # Iterate through the file line by line
+        for line in file:
+            # Match INSERT INTO statements with values
+            if line.startswith("INSERT INTO `ENTITY` VALUES"):
+                # Extract the values part of the INSERT INTO statement
+                matches = re.findall(r"\((.*?)\)", line)
+                for match in matches:
+                    # Split values by comma, accounting for quoted strings
+                    row = re.split(r",(?=(?:[^']*'[^']*')*[^']*$)", match)
+                    # Clean up quotes and whitespace
+                    cleaned_row = [col.strip(" '") for col in row]
+                    # Write the row to the CSV
+                    csv_writer.writerow(cleaned_row)
+
+print(f"Data successfully extracted to {output_csv}")
