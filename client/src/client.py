@@ -1,246 +1,152 @@
+import logging
 import os
-import time
-import requests
-from colorama import init, Fore, Style
 from neo4j import GraphDatabase
 
-init()
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-class KnowledgeGraphClient:
-    def __init__(self):
-        self.neo4j_uri = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
-        self.server_url = os.getenv("SERVER_URL", "http://kg-server:8080")
+class SemMedDBLoader:
+    def __init__(self, uri: str):
+        self.driver = GraphDatabase.driver(uri)
+        logger.info("Connected to Neo4j database")
 
-    def load_csv_data(self, file_path):
-        try:
-            import csv
-            data = []
-            with open(file_path, 'r') as file:
-                reader = csv.DictReader(file, delimiter=',')
-                for row in reader:
-                    data.append(row)
-            self.log_status(f"Successfully loaded data from {file_path}")
-            return data
-        except Exception as e:
-            self.log_error(f"Failed to load {file_path}: {str(e)}")
-            return None
+    def close(self):
+        self.driver.close()
+        logger.info("Closed Neo4j connection")
 
-    def validate_role_data(self, role):
-        required_fields = [':START_ID', ':END_ID', 'relation', 'weight', 'method', ':TYPE']
-        missing_fields = [field for field in required_fields if field not in role]
+    def create_constraints(self):
+        """Create uniqueness constraints"""
+        with self.driver.session() as session:
+            constraints = [
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Concept) REQUIRE c.cui IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (s:Sentence) REQUIRE s.sentence_id IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Citation) REQUIRE c.pmid IS UNIQUE"
+            ]
+            for constraint in constraints:
+                session.run(constraint)
+        logger.info("Created database constraints")
+
+    def load_citations(self, file_path: str):
+        """Load citations data"""
+        query = """
+        LOAD CSV FROM 'file:///' + $file AS row
+        MERGE (c:Citation {pmid: trim(row[0])})
+        SET c.issn = trim(row[1]),
+            c.pub_date = trim(row[2]),
+            c.pub_date_formatted = trim(row[3]),
+            c.pub_year = trim(row[4])
+        """
+        filename = os.path.basename(file_path)
+        self._execute_load(file_path, query, filename)
+        logger.info("Loaded citations data")
+
+    def load_concepts(self, file_path: str):
+        """Load concepts from entity.csv"""
+        query = """
+        LOAD CSV FROM 'file:///' + $file AS row
+        MERGE (c:Concept {cui: row[0]})
+        SET c.name = row[1],
+            c.type = row[2],
+            c.score = toInteger(row[3])
+        """
+        filename = os.path.basename(file_path)
+        self._execute_load(file_path, query, filename)
+        logger.info("Loaded concept data")
+
+    def load_sentences(self, file_path: str):
+        """Load sentences data"""
+        query = """
+        LOAD CSV FROM 'file:///' + $file AS row
+        MATCH (c:Citation {pmid: row[0]})
+        MERGE (s:Sentence {sentence_id: row[1]})
+        SET s.type = row[2],
+            s.number = row[3],
+            s.text = row[4]
+        CREATE (c)-[:HAS_SENTENCE]->(s)
+        """
+        filename = os.path.basename(file_path)
+        self._execute_load(file_path, query, filename)
+        logger.info("Loaded sentences data")
+
+    def load_predications(self, pred_file: str, pred_aux_file: str):
+        """Load predications and their auxiliary information"""
+        # First load main predications
+        pred_query = """
+        LOAD CSV FROM 'file:///' + $file AS row
+        MATCH (s:Sentence {sentence_id: row[0]})
+        MATCH (subject:Concept {cui: row[1]})
+        MATCH (object:Concept {cui: row[2]})
+        CREATE (subject)-[r:PREDICATE {
+            predicate_id: row[3],
+            predicate: row[4],
+            sentence_id: row[0]
+        }]->(object)
+        """
+        pred_filename = os.path.basename(pred_file)
+        self._execute_load(pred_file, pred_query, pred_filename)
         
-        if missing_fields:
-            self.log_warning(f"Missing required fields in role: {missing_fields}")
-            return False
-        return True
-    
-    def create_nodes(self, session, entities):
-        try:
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (n:Entity) REQUIRE n.id IS UNIQUE")
+        # Then load auxiliary information
+        aux_query = """
+        LOAD CSV FROM 'file:///' + $file AS row
+        MATCH ()-[r:PREDICATE {predicate_id: row[0]}]->()
+        SET r.subject_text = row[1],
+            r.object_text = row[2],
+            r.subject_score = toFloat(row[3]),
+            r.object_score = toFloat(row[4]),
+            r.type = row[5]
+        """
+        pred_aux_filename = os.path.basename(pred_aux_file)           
+        self._execute_load(pred_aux_file, aux_query, pred_aux_filename)
+        logger.info("Loaded predications data")
+
+    def _execute_load(self, file_path: str, query: str, filename: str = None):
+        """Execute a LOAD CSV query"""
+        if filename is None:
+            filename = os.path.basename(file_path)
             
-            batch_size = 1000
-            total = len(entities)
-            created = 0
-            
-            label_groups = {}
-            for entity in entities:
-                labels = entity[':LABEL'].replace(' ', '_').split(';')
-                combined_label = ':'.join(labels)
-                if combined_label not in label_groups:
-                    label_groups[combined_label] = []
-                label_groups[combined_label].append(entity)
-            
-            for labels, group in label_groups.items():
-                for i in range(0, len(group), batch_size):
-                    batch = group[i:i + batch_size]
-                    query = f"""
-                    UNWIND $batch AS entity
-                    CREATE (n:{labels} {{
-                        entity_id: entity.`entity:ID`,
-                        name: entity.name,
-                        type: entity.type,
-                        frequency: toInteger(entity.frequency)
-                    }})
-                    """
-                    session.run(query, {"batch": batch})
-                    created += len(batch)
-                    if created % 100 == 0:
-                        self.log_status(f"Created {created}/{total} nodes")
-                
-            self.log_status("Successfully created all nodes")
-        except Exception as e:
-            self.log_error(f"Failed to create nodes: {str(e)}")
-
-    def sanitize_relationship_type(self,rel_type):
-        sanitized = ''.join(c for c in rel_type if c.isalnum() or c == '_')
-        if sanitized[0].isdigit():
-            sanitized = 'REL_' + sanitized
-        return sanitized.upper()
-
-    def create_relationships(self, session, roles):
-        try:
-            self.log_status(f"Starting relationship creation with {len(roles) if roles else 0} roles")
-            if not roles:
-                self.log_error("No roles data provided")
-                return
-
-            if roles and len(roles) > 0:
-                self.log_status("First role data sample:")
-                self.log_status(str(roles[0]))
-                self.log_status("Validating role data structure...")
-                if not self.validate_role_data(roles[0]):
-                    raise ValueError("Invalid role data structure")
-
-            batch_size = 1000
-            total = len(roles)
-            created = 0
-
-            for i in range(0, total, batch_size):
-                batch = roles[i:i + batch_size]
-
-                type_groups = {}
-                for role in batch:
-                    rel_type = self.sanitize_relationship_type(role[':TYPE'])
-                    if rel_type not in type_groups:
-                        type_groups[rel_type] = []
-                    type_groups[rel_type].append(role)
-
-                for rel_type, roles_group in type_groups.items():
-                    query = f"""
-                    UNWIND $batch AS role
-                    MATCH (source {{entity_id: role.`:START_ID`}}), (target {{entity_id: role.`:END_ID`}})
-                    MERGE (source)-[r:{rel_type} {{
-                        relation: role.relation,
-                        weight: toFloat(role.weight),
-                        method: role.method
-                    }}]->(target)
-                    RETURN source.entity_id, type(r), target.entity_id
-                    """
-
-                    tx = session.begin_transaction()
-                    try:
-                        tx.run(query, {'batch': roles_group})
-                        tx.commit()
-                    except Exception as tx_error:
-                        tx.rollback()
-                        raise tx_error
-                
-                verify_query = """
-                UNWIND $types as type
-                MATCH ()-[r]-()
-                WHERE type(r) = type
-                WITH type, count(r) as count
-                RETURN type, count
-                """
-
-                types = [role[':TYPE'] for role in batch]
-
-                verify_result = session.run(verify_query, {
-                    'types': types
-                }).data()
-
-                if verify_result:
-                    self.log_status(f"Verification results: {verify_result}")
-                    created += len(batch)
-                    if created % 1000 == 0:
-                        self.log_status(f"Created {created}/{total} relationships")
+        logger.info(f"Loading file: {file_path}")
+        logger.info(f"First few lines of file:")
+        with open(file_path, 'r') as f:
+            for i, line in enumerate(f):
+                if i < 3:  # Show first 3 lines
+                    logger.info(line.strip())
                 else:
-                    self.log_warning(f"Batch verification failed for relationships {i} to {i+len(batch)}")
-                    # self.log_warning(f"Types being verified: {types}")
-                        
-            self.log_status("Successfully created all relationships")
-        except Exception as e:
-            self.log_error(f"Failed to create relationships: {str(e)}")
-            raise e
-            
-    def build_knowledge_graph(self, entities_file, roles_file):
-        try:
-            entities = self.load_csv_data(entities_file)
-            roles = self.load_csv_data(roles_file)
-            
-            if not entities or not roles:
-                return False
-                
-            driver = GraphDatabase.driver(self.neo4j_uri)
-            
-            with driver.session() as session:
-                self.log_status("Clearing existing graph data...")
-                session.run("MATCH (n) DETACH DELETE n")
-                
-                self.log_status("Creating nodes...")
-                self.create_nodes(session, entities)
-                node_count = session.run("MATCH (n) RETURN count(n) as count").single()
-                self.log_status(f"Verified node count: {node_count['count']}")
-                
-                self.log_status("Creating relationships...")
-                self.create_relationships(session, roles)
+                    break
+        with self.driver.session() as session:
+            session.run(query, file=filename)
 
-                with driver.session() as count_session:
-                    rel_count = count_session.run("MATCH ()-[r]->() RETURN count(r) as count").single()
-                    self.log_status(f"Verified relationship count: {rel_count['count']}")
-                    
-                    stats = count_session.run("""
-                        MATCH (n)
-                        WITH count(DISTINCT n) as nodes
-                        MATCH ()-[r]->()
-                        RETURN nodes, count(DISTINCT r) as relationships
-                    """).single()
-                
-                if not stats:
-                    raise Exception("Failed to retrieve graph statistics - graph may be empty")
-                
-                self.log_status(f"Knowledge graph built successfully:")
-                self.log_status(f"- Nodes: {stats['nodes']}")
-                self.log_status(f"- Relationships: {stats['relationships']}")
-                
-            driver.close()
-            return True
-            
-        except Exception as e:
-            self.log_error(f"Failed to build knowledge graph: {str(e)}")
-            return False
+def main():
+    # Configuration
+    NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
+    DATA_DIR = os.getenv("DATA_DIR", "/var/lib/neo4j/import")
 
-    def log_status(self, message):
-        print(f"{Fore.GREEN}[✓]{Style.RESET_ALL} {message}")
-
-    def log_warning(self, message):
-        print(f"{Fore.YELLOW}[!]{Style.RESET_ALL} {message}")
-
-    def log_error(self, message):
-        print(f"{Fore.RED}[✗]{Style.RESET_ALL} {message}")
-
-    def test_connection(self):
-        max_retries = 5
-        retry_delay = 2
+    try:
+        # Initialize loader
+        loader = SemMedDBLoader(NEO4J_URI)
         
-        for attempt in range(max_retries):
-            try:
-                driver = GraphDatabase.driver(self.neo4j_uri)
-                with driver.session(database="system") as session:
-                    result = session.run("SHOW DATABASE neo4j")
-                    record = result.single()
-                    if record and record["currentStatus"] == "online":
-                        self.log_status("Successfully connected to Neo4j")
-                    else:
-                        raise Exception("Database is not online")
-                driver.close()
-                
-                return True
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    self.log_warning(f"Connection attempt {attempt + 1} failed, retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                else:
-                    self.log_error(f"Connection failed after {max_retries} attempts: {str(e)}")
-                    return False
+        # Create constraints
+        loader.create_constraints()
+
+        # Load data
+        loader.load_citations(os.path.join(DATA_DIR, "citations.csv"))
+        loader.load_concepts(os.path.join(DATA_DIR, "entity.csv"))
+        loader.load_sentences(os.path.join(DATA_DIR, "sentence.csv"))
+        loader.load_predications(
+            os.path.join(DATA_DIR, "predication.csv"),
+            os.path.join(DATA_DIR, "predication_aux.csv")
+        )
+
+        logger.info("Successfully completed loading SemMedDB data")
+
+    except Exception as e:
+        logger.error(f"Error loading data: {str(e)}")
+        raise
+
+    finally:
+        loader.close()
 
 if __name__ == "__main__":
-    client = KnowledgeGraphClient()
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    entities_path = os.path.join(base_path, '..', "/Users/lmarini/data/combini/Entities.csv")
-    roles_path = os.path.join(base_path, '..', "/Users/lmarini/data/combini/Roles.csv")
-    if client.test_connection():
-        client.build_knowledge_graph(
-            entities_path,
-            roles_path,
-        )
+    main()
