@@ -1,108 +1,80 @@
-# Knowledge Graph Creator
+# Neo4j Exploration with SemMedDB
 
-[WIP] This project creates a knowledge graph in Neo4j from the [HALD](https://figshare.com/articles/dataset/HALD_a_human_aging_and_longevity_knowledge_graph_for_precision_gerontology_and_geroscience_analyses/22828196) dataset.
+## Overview
+This project utilizes data from the Semantic MEDLINE Database (SemMedDB), a repository of semantic predications (subject-predicate-object triples) extracted from titles and abstracts of biomedical literature in PubMed.
+
+## Data Source
+The data is sourced from the National Library of Medicine's (NLM) Semantic Knowledge Representation (SKR) project:
+- Source: [SemRep/SemMedDB](https://lhncbc.nlm.nih.gov/ii/tools/SemRep_SemMedDB_SKR/dbinfo.html)
+- Database: SemMedDB
+- Version: Latest public release
+
+## Features
+- Processing of biomedical semantic predications
+- Analysis of subject-predicate-object relationships
+- Integration with PubMed literature references
+- Semantic relationship extraction and analysis
+
+## Database Schema
+The database includes several key tables:
+- PREDICATION: Contains semantic predications
+- SENTENCE: Source sentences from which predications were extracted
+- CITATIONS: Bibliographic information
+- PREDICATION_AUX: Additional predication information
 
 ## Prerequisites
-
-- Python 3.6+
-- Docker
-- `neo4j` Python driver
-- Helm 3.x
-- Kubernetes 1.x
-- kubectl configured to connect to your Kubernetes cluster
+- Python 3.x
+- CSV Database files from SemMedDB. The titles used were as follows:
+    - entity.csv
+    - citations.csv
+    - predication.csv
+    - predication_aux.csv
+    - sentence.csv
+- Required Python packages (list in requirements.txt)
 
 ## Installation
-
-1. Clone this repository:
-   ```
-   git clone https://github.com/yourusername/knowledge-graph-creator.git
-   cd knowledge-graph-creator
-   ```
-
-2. Install the required Python packages:
-   ```
-   pip install -r requirements.txt
-   ```
-
-3. Deploy Neo4j using Helm:
-   ```bash
-   helm install neo4j ./neo4j-chart
-   ```
-   
-   Or use the helper script:
-   ```bash
-   ./scripts/helm-install.sh
-   ```
-
-### Debugging
-
-1. Run the debug script to get detailed information:
-   ```zsh
-   ./scripts/debug.zsh
-   ```
-
-2. Test Neo4j connectivity:
-   ```zsh
-   python scripts/test_connection.py [uri] [username] [password]
-   ```
-   
-### Cleanup
-
-To remove Neo4j and all associated resources:
+1. Clone the repository:
 ```bash
-./scripts/helm-uninstall.sh
+git clone https://github.com/drshika/neo4j-exploration.git
 ```
-
-### Common Issues and Solutions
-
-1. Pod not starting:
-   - Check pod events: `kubectl describe pod <pod-name>`
-   - Verify PVC binding: `kubectl get pvc`
-   - Check logs: `kubectl logs <pod-name>`
-
-2. Connection issues:
-   - Verify service is running: `kubectl get svc neo4j`
-   - Check firewall rules
-   - Ensure correct credentials in deployment
-
-3. Data persistence issues:
-   - Check PV/PVC status: `kubectl get pv,pvc`
-   - Verify volume mounting: `kubectl describe pod <pod-name>`
-
+2. Install the required Python packages:
+```bash
+pip install -r requirements.txt
+```
+4. Run the docker-compose file:
+```bash
+docker-compose up -d
+```  
+5. View the database at http://localhost:7474/browser/. 
 ## Usage
+1. Set up database configuration
+2. Run data import scripts
+3. Execute analysis tools
 
-1. Update the `uri` variable in `test.py` with your Neo4j database URI.
+## Data Processing
+The project processes biomedical literature data through:
+1. Data extraction from SemMedDB
+2. Semantic relationship analysis
+3. Result aggregation and visualization
 
-2. Run the script:
-   ```
-   python test.py
-   ```
+## Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Commit changes
+4. Push to the branch
+5. Create a Pull Request
 
-3. The script will create the knowledge graph and print a summary of the created graph.
+## License
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## File Descriptions
+## Acknowledgments
+- National Library of Medicine (NLM)
+- Semantic Knowledge Representation project team
+- SemRep and SemMedDB developers
 
-- `test.py`: Main script that reads CSV files and creates the knowledge graph in Neo4j.
-- `data/entities.csv`: CSV file containing entity data.
-- `data/roles.csv`: CSV file containing relationship data between entities.
+## Contact
+For questions and support, please open an issue in the repository.
 
-## Functions
-
-- `load_csv_data(file_path)`: Loads data from a CSV file.
-- `sanitize_label(label)`: Sanitizes labels to be Neo4j-compliant.
-- `create_knowledge_graph(tx, entities, roles)`: Creates nodes and relationships in Neo4j.
-- `print_graph_summary(session)`: Prints a summary of the created graph.
-
-## Output
-
-The script will output:
-1. Confirmation that the knowledge graph was created successfully.
-2. Total number of nodes and relationships in the graph.
-3. Sample of up to 5 nodes with their labels and properties.
-4. Sample of up to 5 relationships with their types and properties.
-
-## Troubleshooting
-
-- Ensure your Neo4j database is running and accessible.
-- Check that your CSV files match the expected schema.
-- Verify that you have the necessary permissions to read the CSV files and write to the Neo4j database.
+## References
+- [SemMedDB Documentation](https://lhncbc.nlm.nih.gov/ii/tools/SemRep_SemMedDB_SKR/dbinfo.html)
+- [NLM Semantic Knowledge Resources](https://www.nlm.nih.gov/)

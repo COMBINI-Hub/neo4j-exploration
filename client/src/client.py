@@ -104,9 +104,11 @@ class SemMedDBLoader:
 
     def _execute_load(self, file_path: str, query: str, filename: str = None):
         """Execute a LOAD CSV query"""
-        if filename is None:
-            filename = os.path.basename(file_path)
-            
+
+        # Add count of lines in file
+        line_count = sum(1 for _ in open(file_path))
+        logger.info(f"Total lines in {filename}: {line_count}")
+
         logger.info(f"Loading file: {file_path}")
         logger.info(f"First few lines of file:")
         with open(file_path, 'r') as f:
@@ -115,15 +117,113 @@ class SemMedDBLoader:
                     logger.info(line.strip())
                 else:
                     break
+
+        # Execute load
         with self.driver.session() as session:
             session.run(query, file=filename)
+            
+        # Wait a moment before verification
+        import time
+        time.sleep(2)  # Add a 2-second delay
+            
+        # Verify counts in a new session
+        with self.driver.session() as session:
+            node_counts = {
+                'citations.csv': "MATCH (c:Citation) RETURN count(c) as count",
+                'entity.csv': "MATCH (c:Concept) RETURN count(c) as count",
+                'sentence.csv': "MATCH (s:Sentence) RETURN count(s) as count"
+            }
+            
+            relation_counts = {
+                'sentence.csv': "MATCH ()-[r:HAS_SENTENCE]->() RETURN count(r) as count",
+                'predication.csv': "MATCH ()-[r:PREDICATE]->() RETURN count(r) as count"
+            }
+            
+            if filename in node_counts:
+                result = session.run(node_counts[filename])
+                count = result.single()['count']
+                logger.info(f"Created {count} nodes from {filename}")
+                
+            if filename in relation_counts:
+                result = session.run(relation_counts[filename])
+                count = result.single()['count']
+                logger.info(f"Created {count} relationships from {filename}")
+
+def check_index_consistency(files_dict: dict[str, tuple[str, list[str]]]):
+    """
+    Check index consistency between related files
+    
+    Args:
+        files_dict: Dictionary mapping file paths to tuples of (column_index, related_files)
+            where column_index is the position of the ID column to check
+    """
+    file_indices = {}
+    
+    # First, load all indices
+    for file_path, (id_col, _) in files_dict.items():
+        if not os.path.exists(file_path):
+            logger.warning(f"File not found: {file_path}")
+            continue
+            
+        indices = set()
+        with open(file_path, 'r') as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        index = line.split(',')[id_col].strip('"')
+                        indices.add(index)
+                    except IndexError:
+                        continue
+        
+        file_indices[file_path] = indices
+        logger.info(f"Loaded {len(indices)} indices from {os.path.basename(file_path)}")
+
+    # Then check relationships
+    for file_path, (_, related_files) in files_dict.items():
+        current_indices = file_indices.get(file_path, set())
+        
+        for related_file in related_files:
+            related_indices = file_indices.get(related_file, set())
+            
+            if not related_indices:
+                continue
+
+            # Find indices that exist in current file but not in related file
+            missing_indices = current_indices - related_indices
+            if missing_indices:
+                logger.warning(
+                    f"Found {len(missing_indices)} indices in {os.path.basename(file_path)} "
+                    f"that are missing from {os.path.basename(related_file)}. "
+                    f"First few missing indices: {list(missing_indices)[:5]}"
+                )
 
 def main():
     # Configuration
     NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
     DATA_DIR = os.getenv("DATA_DIR", "/var/lib/neo4j/import")
 
+    # Define files and their relationships
+    files = {
+        os.path.join(DATA_DIR, "citations.csv"): (0, []),  # PMID is column 0
+        os.path.join(DATA_DIR, "entity.csv"): (0, []),     # CUI is column 0
+        os.path.join(DATA_DIR, "sentence.csv"): (1, [      # sentence_id is column 1
+            os.path.join(DATA_DIR, "citations.csv"),        # references PMID
+        ]),
+        os.path.join(DATA_DIR, "predication.csv"): (0, [   # predication_id is column 0
+            os.path.join(DATA_DIR, "sentence.csv"),        # references sentence_id
+            os.path.join(DATA_DIR, "entity.csv"),         # references CUI (subject)
+            os.path.join(DATA_DIR, "entity.csv"),         # references CUI (object)
+        ]),
+        os.path.join(DATA_DIR, "predication_aux.csv"): (0, [  # predication_id is column 0
+            os.path.join(DATA_DIR, "predication.csv"),     # references predication_id
+        ])
+    }
+
     try:
+        # Check data consistency first
+        logger.info("Checking data consistency...")
+        check_index_consistency(files)
+        
         # Initialize loader
         loader = SemMedDBLoader(NEO4J_URI)
         
