@@ -1,6 +1,9 @@
 import logging
 import os
 from neo4j import GraphDatabase
+import csv
+import re
+import time
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,6 +22,69 @@ class SemMedDBLoader:
             session.run("MATCH (n) DETACH DELETE n")
         logger.info("Cleared all nodes and relationships from database")
 
+    def _preprocess_csv(self, input_path: str, output_path: str = None):
+        """
+        Preprocess CSV file to handle quote escaping issues.
+        """
+        output_path = output_path or f"{os.path.splitext(input_path)[0]}_processed{os.path.splitext(input_path)[1]}"
+        
+        try:
+            with open(input_path, 'r', encoding='utf-8') as infile, \
+                open(output_path, 'w', encoding='utf-8', newline='') as outfile:
+                
+                writer = csv.writer(outfile, quoting=csv.QUOTE_NONE, escapechar='\\')
+                for line_num, row in enumerate(csv.reader(infile), 1):
+                    try:
+                        # Remove quotes and whitespace from each field
+                        cleaned_row = [field.strip().replace('"', '').replace("'", '') 
+                                    for field in row if field is not None]
+                        writer.writerow(cleaned_row)
+                    except Exception as e:
+                        logger.error(f"Error at line {line_num}: {row}")
+                        raise
+                        
+            logger.info(f"Preprocessed CSV: {input_path} -> {output_path}")
+            return output_path
+                
+        except Exception as e:
+            logger.error(f"Failed to preprocess {input_path} at line {line_num if 'line_num' in locals() else 'unknown'}")
+            raise
+        """
+        Preprocess CSV file to handle quote escaping issues.
+        """
+        if output_path is None:
+            base, ext = os.path.splitext(input_path)
+            output_path = f"{base}_processed{ext}"
+        
+        try:
+            with open(input_path, 'r', encoding='utf-8') as infile, \
+                open(output_path, 'w', encoding='utf-8', newline='') as outfile:
+                
+                reader = csv.reader(infile)
+                writer = csv.writer(outfile, 
+                                quoting=csv.QUOTE_MINIMAL,
+                                escapechar='\\')
+                
+                for line_num, row in enumerate(reader, 1):
+                    # Strip quotes and whitespace from each field
+                    cleaned_row = [
+                        re.sub(r'["\']', '', field.strip()) if field is not None else ''
+                        for field in row
+                    ]
+                    try:
+                        writer.writerow(cleaned_row)
+                    except Exception as e:
+                        logger.error(f"Error writing line {line_num}: {cleaned_row}")
+                        logger.error(f"Original row: {row}")
+                        raise
+                        
+            logger.info(f"Successfully preprocessed CSV file: {input_path} -> {output_path}")
+            return output_path
+                
+        except Exception as e:
+            logger.error(f"Error preprocessing CSV file {input_path} at line {line_num if 'line_num' in locals() else 'unknown'}")
+            raise
+
     def create_constraints(self):
         """Create uniqueness constraints"""
         with self.driver.session() as session:
@@ -36,8 +102,13 @@ class SemMedDBLoader:
         """Load generic concepts as nodes"""
         query = """
         LOAD CSV FROM 'file:///' + $file AS row
-        MERGE (g:GenericConcept {cui: row[1]})
-        SET g.name = row[2]
+        WITH 
+            COALESCE(trim(row[0]), '') as id,
+            COALESCE(trim(row[1]), '') as cui,
+            COALESCE(trim(row[2]), '') as name
+        WHERE cui <> ''
+        MERGE (g:GenericConcept {cui: cui})
+        SET g.name = CASE WHEN name <> '' THEN name ELSE '' END
         """
         self._execute_load(file_path, query)
         logger.info("Loaded generic concepts")
@@ -46,7 +117,7 @@ class SemMedDBLoader:
         """Load concepts data, excluding generic concepts"""
         query = """
         LOAD CSV WITH HEADERS FROM 'file:///' + $file AS row 
-        FIELDTERMINATOR ',' QUOTE '"'
+        FIELDTERMINATOR ','
         WITH trim(row['0']) as id, trim(row['1']) as citation_id, trim(row['2']) as sentence_id, 
             trim(row['3']) as cui, trim(row['4']) as name, trim(row['5']) as type, 
             trim(row['9']) as score
@@ -120,30 +191,101 @@ class SemMedDBLoader:
         self._execute_load(file_path, query)
         logger.info("Loaded sentences data")
 
-    def _execute_load(self, file_path: str, query: str):
+    def _execute_load(self, file_path: str, query: str, filename: str = None):
         """Execute a LOAD CSV query"""
-        filename = os.path.basename(file_path)
-        
-        # Add count of lines in file
-        line_count = sum(1 for _ in open(file_path))
-        logger.info(f"Total lines in {filename}: {line_count}")
+        try:
+            # Preprocess the CSV file and get the processed file path
+            processed_file_path = self._preprocess_csv(file_path)
+            
+            # Use the filename from the processed path if none provided
+            if filename is None:
+                filename = os.path.basename(processed_file_path)
+            
+            line_count = sum(1 for _ in open(processed_file_path))
+            logger.info(f"Total lines in {filename}: {line_count}")
+            
+            logger.info(f"Loading file: {processed_file_path}")
+            logger.info(f"First few lines of file:")
+            with open(processed_file_path, 'r') as f:
+                for i, line in enumerate(f):
+                    if i < 3:  # Show first 3 lines
+                        logger.info(line.strip())
+                    else:
+                        break
 
-        logger.info(f"Loading file: {file_path}")
-        logger.info(f"First few lines of file:")
-        with open(file_path, 'r') as f:
-            for i, line in enumerate(f):
-                if i < 3:  # Show first 3 lines
-                    logger.info(line.strip())
-                else:
-                    break
+            # Execute load with processed file
+            with self.driver.session() as session:
+                try:
+                    session.run(query, file=filename)
+                except Exception as e:
+                    # Read the processed file to find problematic content
+                    with open(processed_file_path, 'r') as f:
+                        lines = f.readlines()
+                        
+                    logger.error(f"\nError executing query for {filename}:")
+                    logger.error(f"Query: {query}")
+                    logger.error(f"Total lines in file: {len(lines)}")
+                    logger.error("Sample of file content:")
+                    for i in range(min(5, len(lines))):
+                        logger.error(f"Line {i+1}: {lines[i].strip()}")
+                    raise
+                
+            # Wait a moment before verification
+            time.sleep(2)  # Add a 2-second delay
+                
+            # Verify counts in a new session
+            with self.driver.session() as session:
+                node_counts = {
+                    'citations.csv': "MATCH (c:Citation) RETURN count(c) as count",
+                    'entity.csv': "MATCH (c:Concept) RETURN count(c) as count",
+                    'sentence.csv': "MATCH (s:Sentence) RETURN count(s) as count"
+                }
+                
+                relation_counts = {
+                    'sentence.csv': "MATCH ()-[r:HAS_SENTENCE]->() RETURN count(r) as count",
+                    'predication.csv': "MATCH ()-[r:PREDICATE]->() RETURN count(r) as count"
+                }
+                
+                if filename in node_counts:
+                    result = session.run(node_counts[filename])
+                    count = result.single()['count']
+                    logger.info(f"Created {count} nodes from {filename}")
+                    
+                if filename in relation_counts:
+                    result = session.run(relation_counts[filename])
+                    count = result.single()['count']
+                    logger.info(f"Created {count} relationships from {filename}")
+                    
+        except Exception as e:
+            # Extract position from error message if it exists
+            import re
+            position_match = re.search(r'position (\d+)', str(e))
+            if position_match:
+                position = int(position_match.group(1))
+                
+                # Read the processed file and find the problematic line
+                with open(processed_file_path, 'r') as f:
+                    content = f.read()
+                    # Find the line number by counting newlines up to the position
+                    line_number = content[:position].count('\n') + 1
+                    
+                    # Get the problematic line and surrounding context
+                    lines = content.split('\n')
+                    start_line = max(0, line_number - 2)
+                    end_line = min(len(lines), line_number + 2)
+                    
+                    logger.error(f"\nError context for {filename}:")
+                    logger.error(f"Error at position {position}, around line {line_number}")
+                    logger.error("Surrounding lines:")
+                    for i in range(start_line, end_line):
+                        prefix = ">>> " if i + 1 == line_number else "    "
+                        logger.error(f"{prefix}Line {i + 1}: {lines[i]}")
+                        
+            raise
 
-        # Execute load
-        with self.driver.session() as session:
-            session.run(query, file=filename)
-
-    def close(self):
-        self.driver.close()
-        logger.info("Closed Neo4j connection")
+def close(self):
+    self.driver.close()
+    logger.info("Closed Neo4j connection")
 
 def main():
     # Configuration
