@@ -6,7 +6,6 @@ import re
 import time
 import shutil
 from tqdm import tqdm
-from csv_preprocessor import CSVPreprocessor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,32 +28,6 @@ class SemMedDBLoader:
             max_connection_pool_size=50,
             connection_acquisition_timeout=300  # 5 minutes
         )
-    
-    def preprocess_files(data_dir: str):
-        """Preprocess all CSV files before loading into Neo4j"""
-        logger.info("Starting preprocessing of all data files...")
-        
-        # List of files to preprocess (excluding .gz files)
-        files_to_process = [
-            "citations.csv",
-            "sentence.csv",
-            "predication.csv",
-            "predication_aux.csv"
-        ]
-        
-        preprocessor = CSVPreprocessor()
-        
-        for filename in files_to_process:
-            file_path = os.path.join(data_dir, filename)
-            if os.path.exists(file_path):
-                try:
-                    logger.info(f"Preprocessing {filename}...")
-                    preprocessor.preprocess_csv(file_path)
-                except Exception as e:
-                    logger.error(f"Error preprocessing {filename}: {str(e)}")
-                    raise
-        
-        logger.info("Completed preprocessing of all files")
 
     def _get_session(self):
         """Get a new session, recreating the driver if necessary"""
@@ -86,101 +59,123 @@ class SemMedDBLoader:
                 session.run(constraint)
         logger.info("Created database constraints")
 
-    def load_generic_concepts(self, file_path: str):
-        """Load generic concepts as nodes"""
-        query = """
-        LOAD CSV FROM 'file:///' + $file AS row
-        WITH 
-            COALESCE(trim(row[0]), '') as id,
-            COALESCE(trim(row[1]), '') as cui,
-            COALESCE(trim(row[2]), '') as name
-        WHERE cui <> ''
-        MERGE (g:GenericConcept {cui: cui})
-        SET g.name = CASE WHEN name <> '' THEN name ELSE '' END
-        """
-        self._execute_load(file_path, query)
-        logger.info("Loaded generic concepts")
-
-    def load_entities(self, file_path: str):
-            """Load entities data from gzipped CSV"""
+    def load_predications(self, predication_path: str, predication_aux_path: str):
+            """Load predication relationships and their auxiliary data"""
             query = """
-            LOAD CSV FROM 'file:///' + $file AS row
-            MERGE (e:Entity {entity_id: toInteger(row[2])})
-            ON CREATE SET 
-                e.pmid = toInteger(row[0]),
-                e.sentence_id = toInteger(row[1]),
-                e.cui = row[3],
-                e.name = row[4],
-                e.type = row[5],
-                e.start_index = toInteger(row[6]),
-                e.end_index = toInteger(row[7]),
-                e.score = toFloat(row[8])
+            CALL apoc.periodic.iterate(
+            "CALL apoc.load.csv($file, {delimiter: ',', quoteChar: '\"'}) YIELD map 
+            RETURN map",
+            "MATCH (c1:Concept {cui: map[4]})
+            MATCH (c2:Concept {cui: map[9]})
+            CREATE (c1)-[r:PREDICATE {
+                predication_id: map[0],
+                sentence_id: map[1],
+                pmid: map[2],
+                predicate_type: map[3],
+                subject_type: map[6],
+                object_type: map[11]
+            }]->(c2)",
+            {batchSize:500, iterateList:true, parallel:false}
+            )
             """
-            self._execute_load(file_path, query)
-            logger.info("Loaded entities data")
-
-    def load_predications(self, pred_file: str, pred_aux_file: str):
-        """Load predications data, excluding those involving generic concepts"""
-        # First load main predications
-        pred_query = """
-        LOAD CSV FROM 'file:///' + $file AS row
-        WITH row
-        MATCH (subject:Concept {cui: row[1]})
-        MATCH (object:Concept {cui: row[2]})
-        OPTIONAL MATCH (g:GenericConcept)
-        WHERE g.cui IN [row[1], row[2]]
-        WITH row, subject, object, g
-        WHERE g IS NULL
-        CREATE (subject)-[r:PREDICATE {
-            predicate_id: row[3],
-            predicate: row[4],
-            sentence_id: row[0]
-        }]->(object)
-        """
-        self._execute_load(pred_file, pred_query)
-        
-        # Then load auxiliary information
-        aux_query = """
-        CALL {
-            LOAD CSV FROM 'file:///' + $file AS row
-            MATCH ()-[r:PREDICATE {predicate_id: row[0]}]->()
-            SET r.subject_text = row[1],
-                r.object_text = row[2],
-                r.subject_score = toFloat(row[3]),
-                r.object_score = toFloat(row[4]),
-                r.type = row[5]
-        } IN TRANSACTIONS OF 10000 ROWS
-        """
-        self._execute_load(pred_aux_file, aux_query)
-        logger.info("Loaded predications data")
-
-    def load_citations(self, file_path: str):
-        """Load citations data in batches"""
-        query = """
-        LOAD CSV FROM 'file:///' + $file AS row
-            WITH row
-            MERGE (c:Citation {pmid: row[0]})
-            SET c.issn = row[1],
-                c.pub_date = row[2],
-                c.pub_year = row[4]
-        """
-        self._execute_load(file_path, query)
-        logger.info("Loaded citations data")
+            self._execute_load(predication_path, query)
 
     def load_sentences(self, file_path: str):
-        """Load sentences data"""
+        """Load sentences from CSV"""
         query = """
-            LOAD CSV FROM 'file:///' + $file AS row
-            MATCH (c:Citation {pmid: row[1]})
-            MERGE (s:Sentence {sentence_id: row[0]})
-            SET s.type = row[2],
-                s.number = row[3],
-                s.text = row[5]
-            CREATE (c)-[:HAS_SENTENCE]->(s)
+        CALL apoc.periodic.iterate(
+        "CALL apoc.load.csv($file, {delimiter: ',', quoteChar: '\"'}) YIELD map 
+        RETURN map",
+        "CREATE (s:Sentence {
+            sentence_id: map[0],
+            pmid: map[1],
+            type: map[2],
+            number: map[3],
+            offset: map[4],
+            text: map[5],
+            end: map[6]
+        })",
+        {batchSize:1000, iterateList:true, parallel:false}
+        )
         """
         self._execute_load(file_path, query)
-        logger.info("Loaded sentences data")
 
+    def load_generic_concepts(self, file_path: str):
+        """Load generic concepts from CSV"""
+        query = """
+        CALL apoc.periodic.iterate(
+        "CALL apoc.load.csv($file, {delimiter: ',', quoteChar: '\"'}) YIELD map 
+        RETURN map",
+        "CREATE (c:GenericConcept {
+            id: map[0],
+            cui: map[1],
+            name: map[2]
+        })",
+        {batchSize:1000, iterateList:true, parallel:false}
+        )
+        """
+        self._execute_load(file_path, query)
+
+    def load_citations(self, file_path: str):
+        """Load citations from CSV"""
+        query = """
+        CALL apoc.periodic.iterate(
+        "CALL apoc.load.csv($file, {delimiter: ',', quoteChar: '\"'}) YIELD map 
+        RETURN map",
+        "CREATE (c:Citation {
+            pmid: map[0],
+            issn: map[1],
+            dp: map[2],
+            edat: map[3],
+            pyear: map[4]
+        })",
+        {batchSize:1000, iterateList:true, parallel:false}
+        )
+        """
+        self._execute_load(file_path, query)
+
+    def _execute_load(self, file_path: str, query: str, filename: str = None):
+        """Execute a LOAD CSV query using APOC for better performance and error handling"""
+        def _do_load(session, file_path, query, filename):
+            try:
+                if filename is None:
+                    filename = os.path.basename(file_path)
+                
+                logger.info(f"Starting load operation for: {filename}")
+                
+                # Execute the APOC query
+                result = session.run(query, {"file": f"file:///{filename}"})
+                
+                # Get summary statistics
+                summary = result.consume()
+                
+                logger.info(f"\nLoad Statistics for {filename}:")
+                logger.info(f"├─ Nodes created: {summary.counters.nodes_created}")
+                logger.info(f"├─ Relationships created: {summary.counters.relationships_created}")
+                logger.info(f"├─ Properties set: {summary.counters.properties_set}")
+                logger.info("└─ Load completed successfully")
+
+                # Verify data loading
+                verification_queries = {
+                    'citations.csv': ("MATCH (c:Citation) RETURN count(c) as count", "Citation nodes"),
+                    'generic_concept.csv': ("MATCH (c:GenericConcept) RETURN count(c) as count", "Generic Concept nodes"),
+                    'sentence.csv': ("MATCH (s:Sentence) RETURN count(s) as count", "Sentence nodes"),
+                    'predication.csv': ("MATCH ()-[r:PREDICATE]->() RETURN count(r) as count", "Predicate relationships")
+                }
+
+                if filename in verification_queries:
+                    query, label = verification_queries[filename]
+                    count_result = session.run(query)
+                    count = count_result.single()['count']
+                    logger.info(f"Verified {count:,} {label} after loading")
+
+            except Exception as e:
+                logger.error(f"\nError during load operation for {filename}")
+                logger.error(f"Error details: {str(e)}")
+                raise
+
+        return self._execute_with_retry(_do_load, file_path, query, filename)
+    
     def _execute_with_retry(self, operation, *args, **kwargs):
         """Execute a database operation with retries"""
         retries = 0
@@ -199,79 +194,6 @@ class SemMedDBLoader:
                     logger.info(f"Retrying in {sleep_time} seconds...")
                     time.sleep(sleep_time)
                     # Recreate driver before retry
-                    self.driver.close()
-                    self.driver = self._create_driver()
-
-        logger.error(f"Failed after {self.max_retries} attempts")
-        raise last_exception
-
-    def _execute_load(self, file_path: str, query: str, filename: str = None):
-        """Execute a LOAD CSV query using batch transactions for better memory management."""
-        def _do_load(session, file_path, query, filename):
-            try:
-                if filename is None:
-                    filename = os.path.basename(file_path)
-                
-                logger.info(f"Starting load operation for: {filename}")
-                
-                # Convert the LOAD CSV query to use batched transactions
-                batch_query = f"""
-                CALL {{
-                    LOAD CSV FROM 'file:///{filename}' AS row
-                    WITH row LIMIT 500
-                    {query.replace('LOAD CSV FROM $file AS row', '')}
-                }} IN TRANSACTIONS OF 500 ROWS
-                """
-
-                result = session.run(batch_query)
-                
-                # Get summary statistics
-                summary = result.consume()
-                
-                logger.info(f"\nLoad Statistics for {filename}:")
-                logger.info(f"├─ Nodes created: {summary.counters.nodes_created}")
-                logger.info(f"├─ Relationships created: {summary.counters.relationships_created}")
-                logger.info(f"├─ Properties set: {summary.counters.properties_set}")
-                logger.info("└─ Load completed successfully")
-
-                # Verify data loading
-                verification_queries = {
-                    'citations.csv': ("MATCH (c:Citation) RETURN count(c) as count", "Citation nodes"),
-                    'entity.csv': ("MATCH (c:Concept) RETURN count(c) as count", "Concept nodes"),
-                    'sentence.csv': ("MATCH (s:Sentence) RETURN count(s) as count", "Sentence nodes"),
-                    'predication.csv': ("MATCH ()-[r:PREDICATE]->() RETURN count(r) as count", "Predicate relationships")
-                }
-
-                if filename in verification_queries:
-                    query, label = verification_queries[filename]
-                    count_result = session.run(query)
-                    count = count_result.single()['count']
-                    logger.info(f"Verified {count:,} {label} after loading")
-
-            except Exception as e:
-                logger.error(f"\nError during load operation for {filename}")
-                logger.error(f"Error details: {str(e)}")
-                raise
-
-        return self._execute_with_retry(_do_load, file_path, query, filename)
-
-    def _execute_with_retry(self, operation, *args, **kwargs):
-        """Execute a database operation with retries"""
-        retries = 0
-        last_exception = None
-
-        while retries < self.max_retries:
-            try:
-                with self._get_session() as session:
-                    return operation(session, *args, **kwargs)
-            except Exception as e:
-                last_exception = e
-                retries += 1
-                logger.warning(f"Attempt {retries} failed: {str(e)}")
-                if retries < self.max_retries:
-                    sleep_time = 2 ** retries  # Exponential backoff
-                    logger.info(f"Retrying in {sleep_time} seconds...")
-                    time.sleep(sleep_time)
                     self.driver.close()
                     self.driver = self._create_driver()
 
@@ -299,14 +221,14 @@ def main():
         loader.create_constraints()
 
         # Load generic concepts first
-        loader.load_generic_concepts(os.path.join(DATA_DIR, "generic_concept.csv"))
+        loader.load_generic_concepts(os.path.join(DEMO_DATA_DIR, "generic_concept.csv"))
 
         # Load data
-        loader.load_citations(os.path.join(DATA_DIR, "citations.csv"))
-        loader.load_sentences(os.path.join(DATA_DIR, "sentence.csv"))
+        loader.load_citations(os.path.join(DEMO_DATA_DIR, "citations.csv"))
+        loader.load_sentences(os.path.join(DEMO_DATA_DIR, "sentence.csv"))
         loader.load_predications(
-            os.path.join(DATA_DIR, "predication.csv"),
-            os.path.join(DATA_DIR, "predication_aux.csv")
+            os.path.join(DEMO_DATA_DIR, "predication.csv"),
+            os.path.join(DEMO_DATA_DIR, "predication_aux.csv")
         )
         loader.load_entities(os.path.join(DATA_DIR, "semmedVER43_2024_R_ENTITY.csv.gz"))
 
