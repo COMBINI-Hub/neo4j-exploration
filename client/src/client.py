@@ -4,6 +4,9 @@ from neo4j import GraphDatabase
 import csv
 import re
 import time
+import shutil
+from tqdm import tqdm
+from csv_preprocessor import CSVPreprocessor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,79 +15,64 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class SemMedDBLoader:
-    def __init__(self, uri: str, user: str, password: str):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+    def __init__(self, uri: str, user: str, password: str, max_retries: int = 3):
+        self.uri = uri
+        self.max_retries = max_retries
+        self.driver = self._create_driver()
         logger.info("Connected to Neo4j database")
 
+    def _create_driver(self):
+        """Create a new driver with appropriate configurations"""
+        return GraphDatabase.driver(
+            self.uri,
+            max_connection_lifetime=3600,  # 1 hour
+            max_connection_pool_size=50,
+            connection_acquisition_timeout=300  # 5 minutes
+        )
+    
+    def preprocess_files(data_dir: str):
+        """Preprocess all CSV files before loading into Neo4j"""
+        logger.info("Starting preprocessing of all data files...")
+        
+        # List of files to preprocess (excluding .gz files)
+        files_to_process = [
+            "generic_concept.csv",
+            "citations.csv",
+            "sentence.csv",
+            "predication.csv",
+            "predication_aux.csv"
+        ]
+        
+        preprocessor = CSVPreprocessor()
+        
+        for filename in files_to_process:
+            file_path = os.path.join(data_dir, filename)
+            if os.path.exists(file_path):
+                try:
+                    logger.info(f"Preprocessing {filename}...")
+                    preprocessor.preprocess_csv(file_path)
+                except Exception as e:
+                    logger.error(f"Error preprocessing {filename}: {str(e)}")
+                    raise
+        
+        logger.info("Completed preprocessing of all files")
+
+    def _get_session(self):
+        """Get a new session, recreating the driver if necessary"""
+        try:
+            return self.driver.session()
+        except Exception as e:
+            logger.warning(f"Session creation failed: {str(e)}. Attempting to recreate driver...")
+            self.driver.close()
+            self.driver = self._create_driver()
+            return self.driver.session()
+          
     def clear_database(self):
         """Clear all nodes and relationships in the database"""
         with self.driver.session() as session:
             session.run("MATCH (n) DETACH DELETE n")
         logger.info("Cleared all nodes and relationships from database")
-
-    def _preprocess_csv(self, input_path: str, output_path: str = None):
-        """
-        Preprocess CSV file to handle quote escaping issues.
-        """
-        output_path = output_path or f"{os.path.splitext(input_path)[0]}_processed{os.path.splitext(input_path)[1]}"
-        
-        try:
-            with open(input_path, 'r', encoding='utf-8') as infile, \
-                open(output_path, 'w', encoding='utf-8', newline='') as outfile:
-                
-                writer = csv.writer(outfile, quoting=csv.QUOTE_NONE, escapechar='\\')
-                for line_num, row in enumerate(csv.reader(infile), 1):
-                    try:
-                        # Remove quotes and whitespace from each field
-                        cleaned_row = [field.strip().replace('"', '').replace("'", '') 
-                                    for field in row if field is not None]
-                        writer.writerow(cleaned_row)
-                    except Exception as e:
-                        logger.error(f"Error at line {line_num}: {row}")
-                        raise
-                        
-            logger.info(f"Preprocessed CSV: {input_path} -> {output_path}")
-            return output_path
-                
-        except Exception as e:
-            logger.error(f"Failed to preprocess {input_path} at line {line_num if 'line_num' in locals() else 'unknown'}")
-            raise
-        """
-        Preprocess CSV file to handle quote escaping issues.
-        """
-        if output_path is None:
-            base, ext = os.path.splitext(input_path)
-            output_path = f"{base}_processed{ext}"
-        
-        try:
-            with open(input_path, 'r', encoding='utf-8') as infile, \
-                open(output_path, 'w', encoding='utf-8', newline='') as outfile:
-                
-                reader = csv.reader(infile)
-                writer = csv.writer(outfile, 
-                                quoting=csv.QUOTE_MINIMAL,
-                                escapechar='\\')
-                
-                for line_num, row in enumerate(reader, 1):
-                    # Strip quotes and whitespace from each field
-                    cleaned_row = [
-                        re.sub(r'["\']', '', field.strip()) if field is not None else ''
-                        for field in row
-                    ]
-                    try:
-                        writer.writerow(cleaned_row)
-                    except Exception as e:
-                        logger.error(f"Error writing line {line_num}: {cleaned_row}")
-                        logger.error(f"Original row: {row}")
-                        raise
-                        
-            logger.info(f"Successfully preprocessed CSV file: {input_path} -> {output_path}")
-            return output_path
-                
-        except Exception as e:
-            logger.error(f"Error preprocessing CSV file {input_path} at line {line_num if 'line_num' in locals() else 'unknown'}")
-            raise
-
+  
     def create_constraints(self):
         """Create uniqueness constraints"""
         with self.driver.session() as session:
@@ -92,7 +80,8 @@ class SemMedDBLoader:
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Concept) REQUIRE c.cui IS UNIQUE",
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (s:Sentence) REQUIRE s.sentence_id IS UNIQUE",
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Citation) REQUIRE c.pmid IS UNIQUE",
-                "CREATE CONSTRAINT IF NOT EXISTS FOR (g:GenericConcept) REQUIRE g.cui IS UNIQUE"
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (g:GenericConcept) REQUIRE g.cui IS UNIQUE",
+                "CREATE CONSTRAINT entity_id IF NOT EXISTS FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE"
             ]
             for constraint in constraints:
                 session.run(constraint)
@@ -101,36 +90,42 @@ class SemMedDBLoader:
     def load_generic_concepts(self, file_path: str):
         """Load generic concepts as nodes"""
         query = """
+        USING PERIODIC COMMIT 500
         LOAD CSV FROM 'file:///' + $file AS row
         WITH 
-            COALESCE(trim(row[0]), '') as id,
-            COALESCE(trim(row[1]), '') as cui,
-            COALESCE(trim(row[2]), '') as name
-        WHERE cui <> ''
+            toInteger(trim(row[0])) as id,
+            trim(row[1]) as cui,
+            trim(row[2]) as name
+        WHERE cui IS NOT NULL AND cui <> ''
         MERGE (g:GenericConcept {cui: cui})
-        SET g.name = CASE WHEN name <> '' THEN name ELSE '' END
+        SET 
+            g.id = id,
+            g.name = CASE 
+                WHEN name IS NOT NULL AND size(name) > 0 
+                THEN name 
+                ELSE '' 
+            END
         """
         self._execute_load(file_path, query)
         logger.info("Loaded generic concepts")
 
-    def load_concepts(self, file_path: str):
-        """Load concepts data, excluding generic concepts"""
-        query = """
-        LOAD CSV WITH HEADERS FROM 'file:///' + $file AS row 
-        FIELDTERMINATOR ','
-        WITH trim(row['0']) as id, trim(row['1']) as citation_id, trim(row['2']) as sentence_id, 
-            trim(row['3']) as cui, trim(row['4']) as name, trim(row['5']) as type, 
-            trim(row['9']) as score
-        OPTIONAL MATCH (g:GenericConcept {cui: cui})
-        WITH id, citation_id, sentence_id, cui, name, type, score, g
-        WHERE g IS NULL
-        MERGE (c:Concept {cui: cui})
-        SET c.name = name,
-            c.type = type,
-            c.score = CASE WHEN score IS NULL THEN null ELSE toFloat(score) END
-        """
-        self._execute_load(file_path, query)
-        logger.info("Loaded concepts data")
+    def load_entities(self, file_path: str):
+            """Load entities data from gzipped CSV"""
+            query = """
+            LOAD CSV FROM 'file:///' + $file AS row
+            MERGE (e:Entity {entity_id: toInteger(row[2])})
+            ON CREATE SET 
+                e.pmid = toInteger(row[0]),
+                e.sentence_id = toInteger(row[1]),
+                e.cui = row[3],
+                e.name = row[4],
+                e.type = row[5],
+                e.start_index = toInteger(row[6]),
+                e.end_index = toInteger(row[7]),
+                e.score = toFloat(row[8])
+            """
+            self._execute_load(file_path, query)
+            logger.info("Loaded entities data")
 
     def load_predications(self, pred_file: str, pred_aux_file: str):
         """Load predications data, excluding those involving generic concepts"""
@@ -154,25 +149,28 @@ class SemMedDBLoader:
         
         # Then load auxiliary information
         aux_query = """
-        LOAD CSV FROM 'file:///' + $file AS row
-        MATCH ()-[r:PREDICATE {predicate_id: row[0]}]->()
-        SET r.subject_text = row[1],
-            r.object_text = row[2],
-            r.subject_score = toFloat(row[3]),
-            r.object_score = toFloat(row[4]),
-            r.type = row[5]
+        CALL {
+            LOAD CSV FROM 'file:///' + $file AS row
+            MATCH ()-[r:PREDICATE {predicate_id: row[0]}]->()
+            SET r.subject_text = row[1],
+                r.object_text = row[2],
+                r.subject_score = toFloat(row[3]),
+                r.object_score = toFloat(row[4]),
+                r.type = row[5]
+        } IN TRANSACTIONS OF 10000 ROWS
         """
         self._execute_load(pred_aux_file, aux_query)
         logger.info("Loaded predications data")
 
     def load_citations(self, file_path: str):
-        """Load citations data"""
+        """Load citations data in batches"""
         query = """
         LOAD CSV FROM 'file:///' + $file AS row
-        MERGE (c:Citation {pmid: row[0]})
-        SET c.issn = row[1],
-            c.pub_date = row[2],
-            c.pub_year = row[4]
+            WITH row
+            MERGE (c:Citation {pmid: row[0]})
+            SET c.issn = row[1],
+                c.pub_date = row[2],
+                c.pub_year = row[4]
         """
         self._execute_load(file_path, query)
         logger.info("Loaded citations data")
@@ -180,109 +178,153 @@ class SemMedDBLoader:
     def load_sentences(self, file_path: str):
         """Load sentences data"""
         query = """
-        LOAD CSV FROM 'file:///' + $file AS row
-        MATCH (c:Citation {pmid: row[1]})
-        MERGE (s:Sentence {sentence_id: row[0]})
-        SET s.type = row[2],
-            s.number = row[3],
-            s.text = row[5]
-        CREATE (c)-[:HAS_SENTENCE]->(s)
+            LOAD CSV FROM 'file:///' + $file AS row
+            MATCH (c:Citation {pmid: row[1]})
+            MERGE (s:Sentence {sentence_id: row[0]})
+            SET s.type = row[2],
+                s.number = row[3],
+                s.text = row[5]
+            CREATE (c)-[:HAS_SENTENCE]->(s)
         """
         self._execute_load(file_path, query)
         logger.info("Loaded sentences data")
 
+    def _execute_with_retry(self, operation, *args, **kwargs):
+        """Execute a database operation with retries"""
+        retries = 0
+        last_exception = None
+
+        while retries < self.max_retries:
+            try:
+                with self._get_session() as session:
+                    return operation(session, *args, **kwargs)
+            except Exception as e:
+                last_exception = e
+                retries += 1
+                logger.warning(f"Attempt {retries} failed: {str(e)}")
+                if retries < self.max_retries:
+                    sleep_time = 2 ** retries  # Exponential backoff
+                    logger.info(f"Retrying in {sleep_time} seconds...")
+                    time.sleep(sleep_time)
+                    # Recreate driver before retry
+                    self.driver.close()
+                    self.driver = self._create_driver()
+
+        logger.error(f"Failed after {self.max_retries} attempts")
+        raise last_exception
+
     def _execute_load(self, file_path: str, query: str, filename: str = None):
-        """Execute a LOAD CSV query"""
-        try:
-            # Preprocess the CSV file and get the processed file path
-            processed_file_path = self._preprocess_csv(file_path)
-            
-            # Use the filename from the processed path if none provided
-            if filename is None:
-                filename = os.path.basename(processed_file_path)
-            
-            line_count = sum(1 for _ in open(processed_file_path))
-            logger.info(f"Total lines in {filename}: {line_count}")
-            
-            logger.info(f"Loading file: {processed_file_path}")
-            logger.info(f"First few lines of file:")
-            with open(processed_file_path, 'r') as f:
-                for i, line in enumerate(f):
-                    if i < 3:  # Show first 3 lines
-                        logger.info(line.strip())
+        """Execute a LOAD CSV query using APOC periodic iterate for better memory management."""
+        def _do_load(session, file_path, query, filename):
+            try:
+                if filename is None:
+                    filename = os.path.basename(file_path)
+                
+                logger.info(f"Starting load operation for: {filename}")
+                
+                # Convert query for APOC
+                data_query = f"LOAD CSV FROM 'file:///{filename}' AS row RETURN row"
+                operation_query = query
+                if "CALL {" in operation_query:
+                    operation_query = operation_query.replace("CALL {", "").replace("} IN TRANSACTIONS OF 10000 ROWS", "")
+                operation_query = operation_query.replace("LOAD CSV FROM 'file:///' + $file AS row", "WITH $_batch AS row")
+                
+                # Execute with progress monitoring
+                progress_query = """
+                CALL apoc.periodic.iterate(
+                    $data_query,
+                    $operation_query,
+                    {
+                        batchSize: 500,
+                        parallel: false,
+                        iterateList: true,
+                        retries: 3,
+                        batchMode: "BATCH_SINGLE",
+                        params: {file: $filename},
+                        reportInterval: 1000
+                    }
+                )
+                YIELD batches, total, committedOperations, failedOperations, 
+                      failedBatches, retries, errorMessages, batch, operations
+                RETURN batches, total, committedOperations, failedOperations, 
+                      failedBatches, retries, errorMessages
+                """
+
+                result = session.run(
+                    progress_query,
+                    {
+                        'data_query': data_query,
+                        'operation_query': operation_query,
+                        'filename': filename
+                    }
+                )
+                
+                # Process results with progress monitoring
+                stats = result.single()
+                if stats:
+                    logger.info(f"\nLoad Statistics for {filename}:")
+                    logger.info(f"├─ Total rows processed: {stats['total']:,}")
+                    logger.info(f"├─ Batches completed: {stats['batches']:,}")
+                    logger.info(f"├─ Operations committed: {stats['committedOperations']:,}")
+                    
+                    if stats['failedOperations'] > 0:
+                        logger.warning(f"├─ Failed operations: {stats['failedOperations']:,}")
+                        logger.warning(f"├─ Failed batches: {stats['failedBatches']:,}")
+                        logger.warning(f"├─ Retries performed: {stats['retries']:,}")
+                        logger.warning(f"└─ Error messages: {stats['errorMessages']}")
+                        
+                        if stats['failedOperations'] > stats['committedOperations'] * 0.01:
+                            raise Exception(
+                                f"High failure rate detected: {stats['failedOperations']} "
+                                f"failed operations out of {stats['total']} total operations"
+                            )
                     else:
-                        break
+                        logger.info("└─ No failures reported")
 
-            # Execute load with processed file
-            with self.driver.session() as session:
-                try:
-                    session.run(query, file=filename)
-                except Exception as e:
-                    # Read the processed file to find problematic content
-                    with open(processed_file_path, 'r') as f:
-                        lines = f.readlines()
-                        
-                    logger.error(f"\nError executing query for {filename}:")
-                    logger.error(f"Query: {query}")
-                    logger.error(f"Total lines in file: {len(lines)}")
-                    logger.error("Sample of file content:")
-                    for i in range(min(5, len(lines))):
-                        logger.error(f"Line {i+1}: {lines[i].strip()}")
-                    raise
-                
-            # Wait a moment before verification
-            time.sleep(2)  # Add a 2-second delay
-                
-            # Verify counts in a new session
-            with self.driver.session() as session:
-                node_counts = {
-                    'citations.csv': "MATCH (c:Citation) RETURN count(c) as count",
-                    'entity.csv': "MATCH (c:Concept) RETURN count(c) as count",
-                    'sentence.csv': "MATCH (s:Sentence) RETURN count(s) as count"
+                # Verify data loading
+                verification_queries = {
+                    'citations.csv': ("MATCH (c:Citation) RETURN count(c) as count", "Citation nodes"),
+                    'entity.csv': ("MATCH (c:Concept) RETURN count(c) as count", "Concept nodes"),
+                    'sentence.csv': ("MATCH (s:Sentence) RETURN count(s) as count", "Sentence nodes"),
+                    'predication.csv': ("MATCH ()-[r:PREDICATE]->() RETURN count(r) as count", "Predicate relationships")
                 }
-                
-                relation_counts = {
-                    'sentence.csv': "MATCH ()-[r:HAS_SENTENCE]->() RETURN count(r) as count",
-                    'predication.csv': "MATCH ()-[r:PREDICATE]->() RETURN count(r) as count"
-                }
-                
-                if filename in node_counts:
-                    result = session.run(node_counts[filename])
-                    count = result.single()['count']
-                    logger.info(f"Created {count} nodes from {filename}")
-                    
-                if filename in relation_counts:
-                    result = session.run(relation_counts[filename])
-                    count = result.single()['count']
-                    logger.info(f"Created {count} relationships from {filename}")
-                    
-        except Exception as e:
-            # Extract position from error message if it exists
-            import re
-            position_match = re.search(r'position (\d+)', str(e))
-            if position_match:
-                position = int(position_match.group(1))
-                
-                # Read the processed file and find the problematic line
-                with open(processed_file_path, 'r') as f:
-                    content = f.read()
-                    # Find the line number by counting newlines up to the position
-                    line_number = content[:position].count('\n') + 1
-                    
-                    # Get the problematic line and surrounding context
-                    lines = content.split('\n')
-                    start_line = max(0, line_number - 2)
-                    end_line = min(len(lines), line_number + 2)
-                    
-                    logger.error(f"\nError context for {filename}:")
-                    logger.error(f"Error at position {position}, around line {line_number}")
-                    logger.error("Surrounding lines:")
-                    for i in range(start_line, end_line):
-                        prefix = ">>> " if i + 1 == line_number else "    "
-                        logger.error(f"{prefix}Line {i + 1}: {lines[i]}")
-                        
-            raise
 
+                if filename in verification_queries:
+                    query, label = verification_queries[filename]
+                    count_result = session.run(query)
+                    count = count_result.single()['count']
+                    logger.info(f"Verified {count:,} {label} after loading")
+
+            except Exception as e:
+                logger.error(f"\nError during load operation for {filename}")
+                logger.error(f"Error details: {str(e)}")
+                raise
+
+        return self._execute_with_retry(_do_load, file_path, query, filename)
+
+    def _execute_with_retry(self, operation, *args, **kwargs):
+        """Execute a database operation with retries"""
+        retries = 0
+        last_exception = None
+
+        while retries < self.max_retries:
+            try:
+                with self._get_session() as session:
+                    return operation(session, *args, **kwargs)
+            except Exception as e:
+                last_exception = e
+                retries += 1
+                logger.warning(f"Attempt {retries} failed: {str(e)}")
+                if retries < self.max_retries:
+                    sleep_time = 2 ** retries  # Exponential backoff
+                    logger.info(f"Retrying in {sleep_time} seconds...")
+                    time.sleep(sleep_time)
+                    self.driver.close()
+                    self.driver = self._create_driver()
+
+        logger.error(f"Failed after {self.max_retries} attempts")
+        raise last_exception
+    
 def close(self):
     self.driver.close()
     logger.info("Closed Neo4j connection")
@@ -292,8 +334,8 @@ def main():
     NEO4J_URI = "neo4j://localhost:7687"
     NEO4J_USER = "neo4j"
     NEO4J_PASSWORD = "your_password"
-    DATA_DIR = "demo_data"
-
+    DEMO_DATA_DIR = "demo_data"
+    DATA_DIR = "data"
     try:
         # Initialize loader
         loader = SemMedDBLoader(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
@@ -308,12 +350,12 @@ def main():
 
         # Load data
         loader.load_citations(os.path.join(DATA_DIR, "citations.csv"))
-        loader.load_concepts(os.path.join(DATA_DIR, "entity.csv"))
         loader.load_sentences(os.path.join(DATA_DIR, "sentence.csv"))
         loader.load_predications(
             os.path.join(DATA_DIR, "predication.csv"),
             os.path.join(DATA_DIR, "predication_aux.csv")
         )
+        loader.load_entities(os.path.join(DATA_DIR, "semmedVER43_2024_R_ENTITY.csv.gz"))
 
         logger.info("Successfully completed loading SemMedDB data")
 
