@@ -36,7 +36,6 @@ class SemMedDBLoader:
         
         # List of files to preprocess (excluding .gz files)
         files_to_process = [
-            "generic_concept.csv",
             "citations.csv",
             "sentence.csv",
             "predication.csv",
@@ -90,21 +89,14 @@ class SemMedDBLoader:
     def load_generic_concepts(self, file_path: str):
         """Load generic concepts as nodes"""
         query = """
-        USING PERIODIC COMMIT 500
         LOAD CSV FROM 'file:///' + $file AS row
         WITH 
-            toInteger(trim(row[0])) as id,
-            trim(row[1]) as cui,
-            trim(row[2]) as name
-        WHERE cui IS NOT NULL AND cui <> ''
+            COALESCE(trim(row[0]), '') as id,
+            COALESCE(trim(row[1]), '') as cui,
+            COALESCE(trim(row[2]), '') as name
+        WHERE cui <> ''
         MERGE (g:GenericConcept {cui: cui})
-        SET 
-            g.id = id,
-            g.name = CASE 
-                WHEN name IS NOT NULL AND size(name) > 0 
-                THEN name 
-                ELSE '' 
-            END
+        SET g.name = CASE WHEN name <> '' THEN name ELSE '' END
         """
         self._execute_load(file_path, query)
         logger.info("Loaded generic concepts")
@@ -214,7 +206,7 @@ class SemMedDBLoader:
         raise last_exception
 
     def _execute_load(self, file_path: str, query: str, filename: str = None):
-        """Execute a LOAD CSV query using APOC periodic iterate for better memory management."""
+        """Execute a LOAD CSV query using batch transactions for better memory management."""
         def _do_load(session, file_path, query, filename):
             try:
                 if filename is None:
@@ -222,64 +214,25 @@ class SemMedDBLoader:
                 
                 logger.info(f"Starting load operation for: {filename}")
                 
-                # Convert query for APOC
-                data_query = f"LOAD CSV FROM 'file:///{filename}' AS row RETURN row"
-                operation_query = query
-                if "CALL {" in operation_query:
-                    operation_query = operation_query.replace("CALL {", "").replace("} IN TRANSACTIONS OF 10000 ROWS", "")
-                operation_query = operation_query.replace("LOAD CSV FROM 'file:///' + $file AS row", "WITH $_batch AS row")
-                
-                # Execute with progress monitoring
-                progress_query = """
-                CALL apoc.periodic.iterate(
-                    $data_query,
-                    $operation_query,
-                    {
-                        batchSize: 500,
-                        parallel: false,
-                        iterateList: true,
-                        retries: 3,
-                        batchMode: "BATCH_SINGLE",
-                        params: {file: $filename},
-                        reportInterval: 1000
-                    }
-                )
-                YIELD batches, total, committedOperations, failedOperations, 
-                      failedBatches, retries, errorMessages, batch, operations
-                RETURN batches, total, committedOperations, failedOperations, 
-                      failedBatches, retries, errorMessages
+                # Convert the LOAD CSV query to use batched transactions
+                batch_query = f"""
+                CALL {{
+                    LOAD CSV FROM 'file:///{filename}' AS row
+                    WITH row LIMIT 500
+                    {query.replace('LOAD CSV FROM $file AS row', '')}
+                }} IN TRANSACTIONS OF 500 ROWS
                 """
 
-                result = session.run(
-                    progress_query,
-                    {
-                        'data_query': data_query,
-                        'operation_query': operation_query,
-                        'filename': filename
-                    }
-                )
+                result = session.run(batch_query)
                 
-                # Process results with progress monitoring
-                stats = result.single()
-                if stats:
-                    logger.info(f"\nLoad Statistics for {filename}:")
-                    logger.info(f"├─ Total rows processed: {stats['total']:,}")
-                    logger.info(f"├─ Batches completed: {stats['batches']:,}")
-                    logger.info(f"├─ Operations committed: {stats['committedOperations']:,}")
-                    
-                    if stats['failedOperations'] > 0:
-                        logger.warning(f"├─ Failed operations: {stats['failedOperations']:,}")
-                        logger.warning(f"├─ Failed batches: {stats['failedBatches']:,}")
-                        logger.warning(f"├─ Retries performed: {stats['retries']:,}")
-                        logger.warning(f"└─ Error messages: {stats['errorMessages']}")
-                        
-                        if stats['failedOperations'] > stats['committedOperations'] * 0.01:
-                            raise Exception(
-                                f"High failure rate detected: {stats['failedOperations']} "
-                                f"failed operations out of {stats['total']} total operations"
-                            )
-                    else:
-                        logger.info("└─ No failures reported")
+                # Get summary statistics
+                summary = result.consume()
+                
+                logger.info(f"\nLoad Statistics for {filename}:")
+                logger.info(f"├─ Nodes created: {summary.counters.nodes_created}")
+                logger.info(f"├─ Relationships created: {summary.counters.relationships_created}")
+                logger.info(f"├─ Properties set: {summary.counters.properties_set}")
+                logger.info("└─ Load completed successfully")
 
                 # Verify data loading
                 verification_queries = {
