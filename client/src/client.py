@@ -63,7 +63,7 @@ class SemMedDBLoader:
         """Load predication relationships and their auxiliary data"""
         query = """
         CALL apoc.periodic.iterate(
-        'CALL apoc.load.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
+        'CALL apoc.import.csv($file) YIELD map 
         RETURN map',
         'MATCH (c1:Concept {cui: map[4]})
         MATCH (c2:Concept {cui: map[9]})
@@ -78,13 +78,13 @@ class SemMedDBLoader:
         {batchSize:500, iterateList:true, parallel:false}
         )
         """
-        self._execute_load(predication_path, query)
+        # self._execute_load(predication_path, query)
 
     def load_sentences(self, file_path: str):
         """Load sentences from CSV"""
         query = """
         CALL apoc.periodic.iterate(
-        'CALL apoc.load.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
+        'CALL apoc.import.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
         RETURN map',
         'CREATE (s:Sentence {
             sentence_id: map[0],
@@ -100,45 +100,28 @@ class SemMedDBLoader:
         """
         self._execute_load(file_path, query)
 
-    def load_citations(self, file_path: str):
-        """Load citations from CSV"""
-        query = """
-        CALL apoc.periodic.iterate(
-        'CALL apoc.load.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
-        RETURN map',
-        'CREATE (c:Citation {
-            pmid: map[0],
-            issn: map[1],
-            dp: map[2],
-            edat: map[3],
-            pyear: map[4]
-        })',
-        {batchSize:1000, iterateList:true, parallel:false}
-        )
-        """
-        self._execute_load(file_path, query)
-
+    # CALL apoc.import.csv([{fileName: 'file:/persons.csv', labels: ['Person']}], [], {})
     def load_generic_concepts(self, file_path: str):
         """Load generic concepts from CSV"""
         query = """
         CALL apoc.periodic.iterate(
-        'CALL apoc.load.csv($file, {delimiter: ",", quoteChar: "`"}) YIELD map 
-        RETURN map',
-        'CREATE (c:GenericConcept {
-            id: map[0],
-            cui: map[1],
-            name: map[2]
-        })',
-        {batchSize:1000, iterateList:true, parallel:false}
+            'CALL apoc.load.csv("generic_concept.csv", {separator:",", header:false}) YIELD list 
+            RETURN trim(list[0]) as id, trim(list[1]) as cui, trim(list[2]) as name',
+            'CREATE (c:GenericConcept {
+                id: id,
+                cui: cui,
+                name: name
+            })',
+            {batchSize:1000, iterateList:true, parallel:false}
         )
         """
-        self._execute_load(file_path, query)
+        # self._execute_load(file_path, query)
 
     def load_citations(self, file_path: str):
         """Load citations from CSV"""
         query = """
         CALL apoc.periodic.iterate(
-        'CALL apoc.load.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
+        'CALL apoc.import.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
         RETURN map',
         'CREATE (c:Citation {
             pmid: map[0],
@@ -166,12 +149,12 @@ class SemMedDBLoader:
                 logger.info(f"File exists: {os.path.exists(file_path)}")
                 
                 # First verify APOC is working
-                test_result = session.run("CALL apoc.help('apoc.load.csv')")
+                test_result = session.run("CALL apoc.help('apoc.import.csv')")
                 test_result.consume()  # Verify APOC is accessible
                 
-                # Test file accessibility
+                # Counting 
                 test_query = """
-                CALL apoc.load.csv($file, {delimiter: ',', quoteChar: '"'}) 
+                CALL apoc.import.csv($file, {delimiter: ',', quoteChar: '"'}) 
                 YIELD map RETURN count(*) as count
                 """
                 logger.info(f"Testing file access with: {test_query}")
@@ -240,9 +223,9 @@ class SemMedDBLoader:
         logger.error(f"Failed after {self.max_retries} attempts")
         raise last_exception
     
-def close(self):
-    self.driver.close()
-    logger.info("Closed Neo4j connection")
+    def close(self):
+        self.driver.close()
+        logger.info("Closed Neo4j connection")
 
 def main():
     # Configuration
@@ -262,15 +245,15 @@ def main():
         loader.load_generic_concepts(os.path.join(DEMO_DATA_DIR, "generic_concept.csv"))
 
         # Load data
-        loader.load_citations(os.path.join(DEMO_DATA_DIR, "citations.csv"))
-        loader.load_sentences(os.path.join(DEMO_DATA_DIR, "sentence.csv"))
-        loader.load_predications(
-            os.path.join(DEMO_DATA_DIR, "predication.csv"),
-            os.path.join(DEMO_DATA_DIR, "predication_aux.csv")
-        )
-        loader.load_entities(os.path.join(DATA_DIR, "semmedVER43_2024_R_ENTITY.csv.gz"))
+        # loader.load_citations(os.path.join(DEMO_DATA_DIR, "citations.csv"))
+        # loader.load_sentences(os.path.join(DEMO_DATA_DIR, "sentence.csv"))
+        # loader.load_predications(
+        #     os.path.join(DEMO_DATA_DIR, "predication.csv"),
+        #     os.path.join(DEMO_DATA_DIR, "predication_aux.csv")
+        # )
+        # loader.load_entities(os.path.join(DATA_DIR, "semmedVER43_2024_R_ENTITY.csv.gz"))
 
-        logger.info("Successfully completed loading SemMedDB data")
+        # logger.info("Successfully completed loading SemMedDB data")
 
     except Exception as e:
         logger.error(f"Error loading data: {str(e)}")

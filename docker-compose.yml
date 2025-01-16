@@ -11,11 +11,11 @@ services:
     environment:
         - NEO4J_AUTH=none
         - NEO4J_dbms_security_allow__csv__import__from__file__urls=true
+        - NEO4J_PLUGINS=["apoc", "apoc-extended"]
         - NEO4J_apoc_export_file_enabled=true
         - NEO4J_apoc_import_file_enabled=true
         - NEO4J_apoc_import_file_use__neo4j__config=true
-        - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-        - NEO4J_PLUGINS=["apoc"]
+        # - NEO4J_dbms_security_procedures_unrestricted=apoc.*
     ports:
       - "7474:7474"
       - "7687:7687"
