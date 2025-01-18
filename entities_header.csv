@@ -1,0 +1,1 @@
+id:ID(Entity),sentence_id:ID(Sentence),cui,name,type,gene_id,gene_name,text,start_index:int,end_index:int,score:int,is_generic:boolean,generic_score:int

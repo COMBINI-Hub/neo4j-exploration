@@ -84,18 +84,24 @@ class SemMedDBLoader:
         """Load sentences from CSV"""
         query = """
         CALL apoc.periodic.iterate(
-        'CALL apoc.import.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
-        RETURN map',
-        'CREATE (s:Sentence {
-            sentence_id: map[0],
-            pmid: map[1],
-            type: map[2],
-            number: map[3],
-            offset: map[4],
-            text: map[5],
-            end: map[6]
-        })',
-        {batchSize:1000, iterateList:true, parallel:false}
+            'CALL apoc.load.csv($file, {separator:",", header:false}) YIELD list 
+            RETURN trim(list[0]) as sentence_id, 
+                    trim(list[1]) as pmid,
+                    trim(list[2]) as type,
+                    trim(list[3]) as number,
+                    trim(list[4]) as offset,
+                    trim(list[5]) as text,
+                    trim(list[6]) as end',
+            'CREATE (s:Sentence {
+                sentence_id: sentence_id,
+                pmid: pmid,
+                type: type,
+                number: number,
+                offset: offset,
+                text: text,
+                end: end
+            })',
+            {batchSize:1000, iterateList:true, parallel:false}
         )
         """
         self._execute_load(file_path, query)
@@ -105,7 +111,7 @@ class SemMedDBLoader:
         """Load generic concepts from CSV"""
         query = """
         CALL apoc.periodic.iterate(
-            'CALL apoc.load.csv("generic_concept.csv", {separator:",", header:false}) YIELD list 
+            'CALL apoc.load.csv($file_path, {separator:",", header:false}) YIELD list 
             RETURN trim(list[0]) as id, trim(list[1]) as cui, trim(list[2]) as name',
             'CREATE (c:GenericConcept {
                 id: id,
@@ -115,7 +121,7 @@ class SemMedDBLoader:
             {batchSize:1000, iterateList:true, parallel:false}
         )
         """
-        # self._execute_load(file_path, query)
+        self._execute_load(file_path, query)
 
     def load_citations(self, file_path: str):
         """Load citations from CSV"""
@@ -136,92 +142,67 @@ class SemMedDBLoader:
         self._execute_load(file_path, query)
 
     def _execute_load(self, file_path: str, query: str, filename: str = None):
-        """Execute a LOAD CSV query using APOC for better performance and error handling"""
-        def _do_load(session, file_path, query, filename):
+        """Execute a load operation with APOC"""
+        if filename is None:
+            filename = os.path.basename(file_path)
+
+        def _do_load(session):
             try:
-                if filename is None:
-                    filename = os.path.basename(file_path)
-                
-                # Debug information
-                logger.info(f"Attempting to load file: {file_path}")
-                logger.info(f"Using filename: {filename}")
-                logger.info(f"Full query: {query}")
+                # Log operation details
+                logger.info(f"Starting load operation for: {filename}")
+                logger.info(f"Source file path: {file_path}")
                 logger.info(f"File exists: {os.path.exists(file_path)}")
                 
-                # First verify APOC is working
-                test_result = session.run("CALL apoc.help('apoc.import.csv')")
-                test_result.consume()  # Verify APOC is accessible
-                
-                # Counting 
-                test_query = """
-                CALL apoc.import.csv($file, {delimiter: ',', quoteChar: '"'}) 
-                YIELD map RETURN count(*) as count
-                """
-                logger.info(f"Testing file access with: {test_query}")
-                test_result = session.run(test_query, {"file": f"file:///{filename}"})
-                count = test_result.single()['count']
-                logger.info(f"Test read found {count} rows")
-                
-                # Execute the actual query
-                logger.info("Starting main load operation")
+                # Execute the load query
+                logger.info("Executing load query...")
                 result = session.run(query, {"file": f"file:///{filename}"})
-                
-                # Get summary statistics
                 summary = result.consume()
                 
+                # Log results
                 logger.info(f"\nLoad Statistics for {filename}:")
                 logger.info(f"├─ Nodes created: {summary.counters.nodes_created}")
                 logger.info(f"├─ Relationships created: {summary.counters.relationships_created}")
                 logger.info(f"├─ Properties set: {summary.counters.properties_set}")
                 logger.info("└─ Load completed successfully")
 
-                # Verify data loading
+                # Verify the load if applicable
                 verification_queries = {
                     'citations.csv': ("MATCH (c:Citation) RETURN count(c) as count", "Citation nodes"),
                     'generic_concept.csv': ("MATCH (c:GenericConcept) RETURN count(c) as count", "Generic Concept nodes"),
                     'sentence.csv': ("MATCH (s:Sentence) RETURN count(s) as count", "Sentence nodes"),
                     'predication.csv': ("MATCH ()-[r:PREDICATE]->() RETURN count(r) as count", "Predicate relationships")
                 }
-
+                
                 if filename in verification_queries:
-                    query, label = verification_queries[filename]
-                    count_result = session.run(query)
-                    count = count_result.single()['count']
+                    verify_query, label = verification_queries[filename]
+                    count = session.run(verify_query).single()['count']
                     logger.info(f"Verified {count:,} {label} after loading")
 
             except Exception as e:
-                logger.error(f"\nError during load operation for {filename}")
+                logger.error(f"Error during load operation for {filename}")
                 logger.error(f"Error details: {str(e)}")
-                logger.error(f"Error type: {type(e)}")
-                if hasattr(e, 'message'):
-                    logger.error(f"Error message: {e.message}")
                 raise
 
-        return self._execute_with_retry(_do_load, file_path, query, filename)
-    
-    def _execute_with_retry(self, operation, *args, **kwargs):
-        """Execute a database operation with retries"""
+        # Execute with retries
         retries = 0
-        last_exception = None
-
         while retries < self.max_retries:
             try:
                 with self._get_session() as session:
-                    return operation(session, *args, **kwargs)
+                    return _do_load(session)
             except Exception as e:
-                last_exception = e
                 retries += 1
+                if retries == self.max_retries:
+                    logger.error(f"Failed after {self.max_retries} attempts")
+                    raise
+                
                 logger.warning(f"Attempt {retries} failed: {str(e)}")
-                if retries < self.max_retries:
-                    sleep_time = 2 ** retries  # Exponential backoff
-                    logger.info(f"Retrying in {sleep_time} seconds...")
-                    time.sleep(sleep_time)
-                    # Recreate driver before retry
-                    self.driver.close()
-                    self.driver = self._create_driver()
-
-        logger.error(f"Failed after {self.max_retries} attempts")
-        raise last_exception
+                sleep_time = 2 ** retries  # Exponential backoff
+                logger.info(f"Retrying in {sleep_time} seconds...")
+                time.sleep(sleep_time)
+                
+                # Recreate connection
+                self.driver.close()
+                self.driver = self._create_driver()
     
     def close(self):
         self.driver.close()
@@ -246,7 +227,7 @@ def main():
 
         # Load data
         # loader.load_citations(os.path.join(DEMO_DATA_DIR, "citations.csv"))
-        # loader.load_sentences(os.path.join(DEMO_DATA_DIR, "sentence.csv"))
+        loader.load_sentences(os.path.join(DEMO_DATA_DIR, "sentence.csv"))
         # loader.load_predications(
         #     os.path.join(DEMO_DATA_DIR, "predication.csv"),
         #     os.path.join(DEMO_DATA_DIR, "predication_aux.csv")
