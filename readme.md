@@ -1,7 +1,20 @@
-# Neo4j Exploration with SemMedDB
+# SemMedDB Neo4j Data Pipeline
 
 ## Overview
-This project utilizes data from the Semantic MEDLINE Database (SemMedDB), a repository of semantic predications (subject-predicate-object triples) extracted from titles and abstracts of biomedical literature in PubMed.
+A data pipeline for loading and analyzing SemMedDB (Semantic MEDLINE Database) data into Neo4j. This project processes biomedical semantic predications from PubMed literature and creates a graph database for analysis.
+
+## Features
+- Automated data loading from CSV/SQL sources
+- Configurable batch processing
+- Relationship creation between entities
+- Memory-optimized for large datasets
+- Docker containerization
+- Progress logging and error handling
+
+## Prerequisites
+- Docker and Docker Compose
+- Python 3.x
+- Neo4j APOC plugin
 
 ## Data Source
 The data is sourced from the National Library of Medicine's (NLM) Semantic Knowledge Representation (SKR) project:
@@ -9,28 +22,16 @@ The data is sourced from the National Library of Medicine's (NLM) Semantic Knowl
 - Database: SemMedDB
 - Version: Latest public release
 
-## Features
-- Processing of biomedical semantic predications
-- Analysis of subject-predicate-object relationships
-- Integration with PubMed literature references
-- Semantic relationship extraction and analysis
-
-## Database Schema
-The database includes several key tables:
-- PREDICATION: Contains semantic predications
-- SENTENCE: Source sentences from which predications were extracted
-- CITATIONS: Bibliographic information
-- PREDICATION_AUX: Additional predication information
-
-## Prerequisites
-- Python 3.x
-- CSV Database files from SemMedDB. The titles used were as follows:
-    - entity.csv
-    - citations.csv
-    - predication.csv
-    - predication_aux.csv
-    - sentence.csv
-- Required Python packages (list in requirements.txt)
+## Data Requirements
+Place your data files in the appropriate directories:
+```bash
+    data/
+    ├── entity.gz
+    ├── citations.csv
+    ├── predication.csv
+    ├── predication_aux.csv
+    └── sentence.csv
+```
 
 ## Installation
 1. Clone the repository:
@@ -41,31 +42,25 @@ git clone https://github.com/drshika/neo4j-exploration.git
 ```bash
 pip install -r requirements.txt
 ```
+3. Configure environment:
+Edit the configuration in `Config` class (referenced in client.py, lines 6-22) to match your setup.
 4. Run the docker-compose file:
 ```bash
 docker-compose up -d
 ```  
 5. View the database at http://localhost:7474/browser/. 
-## Usage
-1. Set up database configuration
-2. Run data import scripts
-3. Execute analysis tools
 
-## Data Processing
-The project processes biomedical literature data through:
-1. Data extraction from SemMedDB
-2. Semantic relationship analysis
-3. Result aggregation and visualization
+## Data Model
+The graph database consists of the following main nodes:
+- Citations
+- Sentences
+- Entities
+- Predications
 
-## Contributing
-1. Fork the repository
-2. Create a feature branch
-3. Commit changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+With relationships:
+- HAS_ENTITY
+- HAS_PREDICATION
+- BELONGS_TO_SAME_CITATION
 
 ## Acknowledgments
 - National Library of Medicine (NLM)

@@ -1,247 +1,277 @@
-import logging
-import os
 from neo4j import GraphDatabase
-import csv
-import re
+import logging
 import time
-import shutil
-from tqdm import tqdm
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-class SemMedDBLoader:
-    def __init__(self, uri: str, max_retries: int = 3):
-        self.uri = uri
-        self.max_retries = max_retries
-        self.driver = self._create_driver()
-        logger.info("Connected to Neo4j database")
-
-    def _create_driver(self):
-        """Create a new driver with appropriate configurations"""
-        return GraphDatabase.driver(
-            self.uri,
-            max_connection_lifetime=3600,  # 1 hour
-            max_connection_pool_size=50,
-            connection_acquisition_timeout=300  # 5 minutes
-        )
-
-    def _get_session(self):
-        """Get a new session, recreating the driver if necessary"""
-        try:
-            return self.driver.session()
-        except Exception as e:
-            logger.warning(f"Session creation failed: {str(e)}. Attempting to recreate driver...")
-            self.driver.close()
-            self.driver = self._create_driver()
-            return self.driver.session()
-          
-    def clear_database(self):
-        """Clear all nodes and relationships in the database"""
+# Configuration
+class Config:
+    # Database connection
+    NEO4J_URI = "neo4j://localhost:7687"
+    
+    # Data file paths
+    DATA_DIR = "data"
+    CITATIONS_FILE = f"{DATA_DIR}/citations.csv"
+    SENTENCES_FILE = f"{DATA_DIR}/sentences.csv"
+    ENTITIES_FILE = f"{DATA_DIR}/entity.gz"
+    PREDICATIONS_FILE = f"{DATA_DIR}/predications.csv"
+    
+    # Batch sizes for different operations
+    CITATION_BATCH_SIZE = 1000
+    SENTENCE_BATCH_SIZE = 1000
+    ENTITY_BATCH_SIZE = 1000
+    PREDICATION_BATCH_SIZE = 1000
+    RELATIONSHIP_BATCH_SIZE = 500
+class Neo4jConnector:
+    def __init__(self, uri, user, password):
+        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.logger = self._setup_logger()
+    def get_node_count(self, label):
         with self.driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
-        logger.info("Cleared all nodes and relationships from database")
-  
+            result = session.run(f"MATCH (n:{label}) RETURN count(n) as count")
+            return result.single()["count"]
+
+    def get_relationship_count(self, type=None):
+        query = "MATCH ()-[r]->() RETURN count(r) as count" if type is None else \
+                f"MATCH ()-[r:{type}]->() RETURN count(r) as count"
+        with self.driver.session() as session:
+            result = session.run(query)
+            return result.single()["count"]
+    def _setup_logger(self):
+        logger = logging.getLogger("Neo4jLoader")
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        return logger
+
+    def close(self):
+        self.driver.close()
+
     def create_constraints(self):
-        """Create uniqueness constraints"""
+        # Constraints
+        constraints = [
+            # Primary key constraints
+            "CREATE CONSTRAINT entity_id_primary IF NOT EXISTS FOR (e:Entity) REQUIRE e.ENTITY_ID IS UNIQUE",
+            "CREATE CONSTRAINT predication_id_constraint IF NOT EXISTS FOR (p:Predication) REQUIRE p.predication_id IS UNIQUE"
+        ]
+        
+        # Indexes
+        indexes = [
+            # Entity indexes
+            "CREATE INDEX entity_sentence_id IF NOT EXISTS FOR (e:Entity) ON (e.SENTENCE_ID)",
+            "CREATE INDEX pmid_entity_index_btree IF NOT EXISTS FOR (e:Entity) ON (e.PMID, e.START_INDEX)",
+            
+            # Sentence indexes
+            "CREATE INDEX sentence_text IF NOT EXISTS FOR (s:Sentence) ON (s.SENTENCE)",
+            "CREATE INDEX sentence_pmid_index IF NOT EXISTS FOR (s:Sentence) ON (s.number)",
+            
+            # Generic Concept index
+            "CREATE INDEX generic_concept_name IF NOT EXISTS FOR (g:GenericConcept) ON (g.name)",
+            
+            # Predication indexes
+            "CREATE INDEX predication_sentence_id IF NOT EXISTS FOR (p:Predication) ON (p.SENTENCE_ID)",
+            "CREATE INDEX predication_id_range IF NOT EXISTS FOR (p:Predication) ON (p.predication_id)",
+            "CREATE POINT INDEX predication_id_point IF NOT EXISTS FOR (p:Predication) ON (p.predication_id)"
+        ]
+        
         with self.driver.session() as session:
-            constraints = [
-                "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Concept) REQUIRE c.cui IS UNIQUE",
-                "CREATE CONSTRAINT IF NOT EXISTS FOR (s:Sentence) REQUIRE s.sentence_id IS UNIQUE",
-                "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Citation) REQUIRE c.pmid IS UNIQUE",
-                "CREATE CONSTRAINT IF NOT EXISTS FOR (g:GenericConcept) REQUIRE g.cui IS UNIQUE",
-                "CREATE CONSTRAINT entity_id IF NOT EXISTS FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE"
-            ]
+            self.logger.info("Creating constraints...")
             for constraint in constraints:
                 session.run(constraint)
-        logger.info("Created database constraints")
+            
+            self.logger.info("Creating indexes...")
+            for index in indexes:
+                session.run(index)
+            
+            result = session.run("SHOW CONSTRAINTS")
+            constraint_count = len(list(result))
+            result = session.run("SHOW INDEXES")
+            index_count = len(list(result))
+            self.logger.info(f"Total constraints: {constraint_count}, Total indexes: {index_count}")
 
-    def load_predications(self, predication_path: str, predication_aux_path: str):
-        """Load predication relationships and their auxiliary data"""
-        query = """
-        CALL apoc.periodic.iterate(
-        'CALL apoc.import.csv($file) YIELD map 
-        RETURN map',
-        'MATCH (c1:Concept {cui: map[4]})
-        MATCH (c2:Concept {cui: map[9]})
-        CREATE (c1)-[r:PREDICATE {
-            predication_id: map[0],
-            sentence_id: map[1],
-            pmid: map[2],
-            predicate_type: map[3],
-            subject_type: map[6],
-            object_type: map[11]
-        }]->(c2)',
-        {batchSize:500, iterateList:true, parallel:false}
-        )
-        """
-        # self._execute_load(predication_path, query)
-
-    def load_sentences(self, file_path: str):
-        """Load sentences from CSV"""
+    def load_citations(self):
         query = """
         CALL apoc.periodic.iterate(
             'CALL apoc.load.csv($file, {separator:",", header:false}) YIELD list 
-            RETURN trim(list[0]) as sentence_id, 
+             RETURN trim(list[0]) as pmid,
+                    trim(list[1]) as issn,
+                    trim(list[2]) as dp,
+                    trim(list[3]) as edat,
+                    trim(list[4]) as pyear',
+            'CREATE (c:Citation {
+                pmid: pmid,
+                issn: issn,
+                dp: dp,
+                edat: edat,
+                pyear: pyear
+            })',
+            {batchSize: $batchSize, iterateList:true, parallel:false, params: {file: $file}}
+        )
+        """
+        with self.driver.session() as session:
+            session.run(query, file=Config.CITATIONS_FILE, batchSize=Config.CITATION_BATCH_SIZE)
+            count = self.get_node_count("Citation")
+            self.logger.info(f"Citations in database: {count}")
+            
+    def load_sentences(self):
+        query = """
+        CALL apoc.periodic.iterate(
+            'CALL apoc.load.csv($file, {separator:",", header:false}) YIELD list 
+             RETURN trim(list[0]) as sentence_id,
                     trim(list[1]) as pmid,
                     trim(list[2]) as type,
                     trim(list[3]) as number,
-                    trim(list[4]) as offset,
-                    trim(list[5]) as text,
-                    trim(list[6]) as end',
+                    trim(list[4]) as sent_start_index,
+                    trim(list[5]) as sent_end_index,
+                    trim(list[6]) as section_header,
+                    trim(list[7]) as normalized_section_header,
+                    trim(list[8]) as sentence',
             'CREATE (s:Sentence {
                 sentence_id: sentence_id,
                 pmid: pmid,
                 type: type,
                 number: number,
-                offset: offset,
-                text: text,
-                end: end
+                sent_start_index: sent_start_index,
+                sent_end_index: sent_end_index,
+                section_header: section_header,
+                normalized_section_header: normalized_section_header,
+                sentence: sentence
             })',
-            {batchSize:1000, iterateList:true, parallel:false}
+            {batchSize: $batchSize, iterateList:true, parallel:false, params: {file: $file}}
         )
         """
-        self._execute_load(file_path, query)
-
-    # CALL apoc.import.csv([{fileName: 'file:/persons.csv', labels: ['Person']}], [], {})
-    def load_generic_concepts(self, file_path: str):
-        """Load generic concepts from CSV"""
+        with self.driver.session() as session:
+            session.run(query, file=Config.SENTENCES_FILE, batchSize=Config.SENTENCE_BATCH_SIZE)
+            count = self.get_node_count("Sentence")
+            self.logger.info(f"Sentences in database: {count}")
+            
+    def load_entities(self):
         query = """
         CALL apoc.periodic.iterate(
-            'CALL apoc.load.csv($file_path, {separator:",", header:false}) YIELD list 
-            RETURN trim(list[0]) as id, trim(list[1]) as cui, trim(list[2]) as name',
-            'CREATE (c:GenericConcept {
-                id: id,
+            'CALL apoc.load.csv($file, {
+                compression: "GZIP", 
+                separator:",", 
+                header:false
+            }) 
+            YIELD list 
+            RETURN trim(list[0]) as entity_id,
+                   trim(list[1]) as sentence_id,
+                   trim(list[2]) as cui,
+                   trim(list[3]) as name,
+                   trim(list[4]) as type,
+                   trim(list[5]) as gene_id,
+                   trim(list[6]) as gene_name,
+                   trim(list[7]) as text,
+                   trim(list[8]) as start_index,
+                   trim(list[9]) as end_index,
+                   trim(list[10]) as score',
+            'CREATE (e:Entity {
+                entity_id: entity_id,
+                sentence_id: sentence_id,
                 cui: cui,
-                name: name
+                name: name,
+                type: type,
+                gene_id: gene_id,
+                gene_name: gene_name,
+                text: text,
+                start_index: start_index,
+                end_index: end_index,
+                score: score
             })',
-            {batchSize:1000, iterateList:true, parallel:false}
+            {
+                batchSize: $batchSize,
+                iterateList: true,
+                parallel: false,
+                params: {file: $file},
+                concurrency: 1
+            }
         )
         """
-        self._execute_load(file_path, query)
-
-    def load_citations(self, file_path: str):
-        """Load citations from CSV"""
-        query = """
-        CALL apoc.periodic.iterate(
-        'CALL apoc.import.csv($file, {delimiter: ",", quoteChar: "\\"" }) YIELD map 
-        RETURN map',
-        'CREATE (c:Citation {
-            pmid: map[0],
-            issn: map[1],
-            dp: map[2],
-            edat: map[3],
-            pyear: map[4]
-        })',
-        {batchSize:1000, iterateList:true, parallel:false}
-        )
-        """
-        self._execute_load(file_path, query)
-
-    def _execute_load(self, file_path: str, query: str, filename: str = None):
-        """Execute a load operation with APOC"""
-        if filename is None:
-            filename = os.path.basename(file_path)
-
-        def _do_load(session):
-            try:
-                # Log operation details
-                logger.info(f"Starting load operation for: {filename}")
-                logger.info(f"Source file path: {file_path}")
-                logger.info(f"File exists: {os.path.exists(file_path)}")
-                
-                # Execute the load query
-                logger.info("Executing load query...")
-                result = session.run(query, {"file": f"file:///{filename}"})
-                summary = result.consume()
-                
-                # Log results
-                logger.info(f"\nLoad Statistics for {filename}:")
-                logger.info(f"├─ Nodes created: {summary.counters.nodes_created}")
-                logger.info(f"├─ Relationships created: {summary.counters.relationships_created}")
-                logger.info(f"├─ Properties set: {summary.counters.properties_set}")
-                logger.info("└─ Load completed successfully")
-
-                # Verify the load if applicable
-                verification_queries = {
-                    'citations.csv': ("MATCH (c:Citation) RETURN count(c) as count", "Citation nodes"),
-                    'generic_concept.csv': ("MATCH (c:GenericConcept) RETURN count(c) as count", "Generic Concept nodes"),
-                    'sentence.csv': ("MATCH (s:Sentence) RETURN count(s) as count", "Sentence nodes"),
-                    'predication.csv': ("MATCH ()-[r:PREDICATE]->() RETURN count(r) as count", "Predicate relationships")
-                }
-                
-                if filename in verification_queries:
-                    verify_query, label = verification_queries[filename]
-                    count = session.run(verify_query).single()['count']
-                    logger.info(f"Verified {count:,} {label} after loading")
-
-            except Exception as e:
-                logger.error(f"Error during load operation for {filename}")
-                logger.error(f"Error details: {str(e)}")
-                raise
-
-        # Execute with retries
-        retries = 0
-        while retries < self.max_retries:
-            try:
-                with self._get_session() as session:
-                    return _do_load(session)
-            except Exception as e:
-                retries += 1
-                if retries == self.max_retries:
-                    logger.error(f"Failed after {self.max_retries} attempts")
-                    raise
-                
-                logger.warning(f"Attempt {retries} failed: {str(e)}")
-                sleep_time = 2 ** retries  # Exponential backoff
-                logger.info(f"Retrying in {sleep_time} seconds...")
-                time.sleep(sleep_time)
-                
-                # Recreate connection
-                self.driver.close()
-                self.driver = self._create_driver()
-    
-    def close(self):
-        self.driver.close()
-        logger.info("Closed Neo4j connection")
-
+        with self.driver.session() as session:
+            session.run(query, file=Config.ENTITIES_FILE, batchSize=Config.ENTITY_BATCH_SIZE)
+            count = self.get_node_count("Entity")
+            self.logger.info(f"Entities in database: {count}")
+            
+    def create_relationships(self):
+        relationships = [
+            ("HAS_ENTITY", """
+            CALL apoc.periodic.iterate(
+                "MATCH (s:Sentence)
+                 MATCH (e:Entity)
+                 WHERE s.sentence_id = e.sentence_id
+                 RETURN s, e",
+                "CREATE (s)-[:HAS_ENTITY]->(e)",
+                {batchSize: $batchSize}
+            )
+            """),
+            ("HAS_PREDICATION", """
+            CALL apoc.periodic.iterate(
+                "MATCH (s:Sentence)
+                 MATCH (p:Predication)
+                 WHERE s.sentence_id = p.sentence_id
+                 RETURN s, p",
+                "CREATE (s)-[:HAS_PREDICATION]->(p)",
+                {batchSize: $batchSize}
+            )
+            """),
+            ("BELONGS_TO_SAME_CITATION", """
+            CALL apoc.periodic.iterate(
+                "MATCH (s:Sentence)
+                 MATCH (p:Predication)
+                 WHERE s.pmid = p.pmid
+                 RETURN s, p",
+                "CREATE (s)-[:BELONGS_TO_SAME_CITATION]->(p)",
+                {batchSize: $batchSize}
+            )
+            """)
+        ]
+        
+        with self.driver.session() as session:
+            for rel_type, relationship_query in relationships:
+                session.run(relationship_query, batchSize=Config.RELATIONSHIP_BATCH_SIZE)
+                count = self.get_relationship_count(rel_type)
+                self.logger.info(f"Created {count} {rel_type} relationships")
 def main():
-    # Configuration
-    NEO4J_URI = "neo4j://localhost:7687"
-    DEMO_DATA_DIR = "demo_data"
-    DATA_DIR = "data"
+    # Initialize connection
+    uri = "neo4j://localhost:7687"
+    
+    connector = Neo4jConnector(uri)
+    
     try:
-        # Initialize loader
-        loader = SemMedDBLoader(NEO4J_URI)
-
-        loader.clear_database()
-
         # Create constraints
-        loader.create_constraints()
+        connector.logger.info("Creating constraints...")
+        connector.create_constraints()
 
-        # Load generic concepts first
-        loader.load_generic_concepts(os.path.join(DEMO_DATA_DIR, "generic_concept.csv"))
+        # Load nodes
+        connector.logger.info("Loading Citations...")
+        connector.load_citations()
+        
+        connector.logger.info("Loading Sentences...")
+        connector.load_sentences()
+        
+        connector.logger.info("Loading Entities...")
+        connector.load_entities()
+        
+        connector.logger.info("Loading Predications...")
+        connector.load_predications()
 
-        # Load data
-        # loader.load_citations(os.path.join(DEMO_DATA_DIR, "citations.csv"))
-        loader.load_sentences(os.path.join(DEMO_DATA_DIR, "sentence.csv"))
-        # loader.load_predications(
-        #     os.path.join(DEMO_DATA_DIR, "predication.csv"),
-        #     os.path.join(DEMO_DATA_DIR, "predication_aux.csv")
-        # )
-        # loader.load_entities(os.path.join(DATA_DIR, "semmedVER43_2024_R_ENTITY.csv.gz"))
-
-        # logger.info("Successfully completed loading SemMedDB data")
+        # Create relationships
+        connector.logger.info("Creating relationships...")
+        connector.create_relationships()
+        
+        # Log final statistics
+        connector.logger.info("=== Final Database Statistics ===")
+        for label in ["Citation", "Sentence", "Entity", "Predication"]:
+            count = connector.get_node_count(label)
+            connector.logger.info(f"Total {label} nodes: {count}")
+        
+        total_rels = connector.get_relationship_count()
+        connector.logger.info(f"Total relationships: {total_rels}")
 
     except Exception as e:
-        logger.error(f"Error loading data: {str(e)}")
-        raise
-
+        connector.logger.error(f"An error occurred: {str(e)}")
     finally:
-        loader.close()
+        connector.close()
 
 if __name__ == "__main__":
     main()

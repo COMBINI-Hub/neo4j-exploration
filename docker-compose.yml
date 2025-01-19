@@ -34,29 +34,17 @@ services:
         - NEO4J_dbms_jvm_additional="-XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
         
         # Transaction and query settings for large operations
-        - NEO4J_dbms_transaction_timeout=1h
-        - NEO4J_dbms_transaction_state_max__size=0
         - NEO4J_dbms_memory_off__heap_max__size=8G
-    
     deploy:
       resources:
         limits:
           memory: 28G
         reservations:
           memory: 24G
-    
     ports:
       - "7474:7474"
       - "7687:7687"
       - "8080:8080"
-      
-    command: >
-      bash -c "
-        set -e
-        chmod +x /var/lib/neo4j/import/import_data.sh &&
-        neo4j start &&
-        tail -f /logs/neo4j.log
-      "
     restart: unless-stopped
   # client:
   #   build: 
