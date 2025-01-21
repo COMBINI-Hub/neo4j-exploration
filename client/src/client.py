@@ -12,8 +12,9 @@ class Config:
     CITATIONS_FILE = f"{DATA_DIR}/citations.csv"
     SENTENCES_FILE = f"{DATA_DIR}/sentences.csv"
     ENTITIES_FILE = f"{DATA_DIR}/entity.gz"
-    PREDICATIONS_FILE = f"{DATA_DIR}/predications.csv"
-    
+    PREDICATIONS_FILE = f"{DATA_DIR}/predication.csv"
+    PREDICATION_AUX_FILE = f"{DATA_DIR}/predication_aux.csv"
+        
     # Batch sizes for different operations
     CITATION_BATCH_SIZE = 1000
     SENTENCE_BATCH_SIZE = 1000
@@ -21,8 +22,8 @@ class Config:
     PREDICATION_BATCH_SIZE = 1000
     RELATIONSHIP_BATCH_SIZE = 500
 class Neo4jConnector:
-    def __init__(self, uri, user, password):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+    def __init__(self, uri):
+        self.driver = GraphDatabase.driver(uri)
         self.logger = self._setup_logger()
     def get_node_count(self, label):
         with self.driver.session() as session:
@@ -144,6 +145,114 @@ class Neo4jConnector:
             session.run(query, file=Config.SENTENCES_FILE, batchSize=Config.SENTENCE_BATCH_SIZE)
             count = self.get_node_count("Sentence")
             self.logger.info(f"Sentences in database: {count}")
+    
+    # WIP
+    def load_predications(self):
+        # Step 1: Create predication nodes from PREDICATION table
+        create_predications_query = """
+    CALL apoc.periodic.iterate(
+        'CALL apoc.load.csv($file, {separator:",", quoteChar:"\\"", nullValues:["\\\\N"]}) YIELD list 
+         RETURN 
+                trim(coalesce(list[0], "")) as predication_id,
+                trim(coalesce(list[1], "")) as sentence_id,
+                trim(coalesce(list[2], "")) as pmid,
+                trim(coalesce(list[3], "")) as predicate,
+                trim(coalesce(list[4], "")) as subject_cui,
+                trim(coalesce(list[5], "")) as subject_name,
+                trim(coalesce(list[6], "")) as subject_semtype,
+                trim(coalesce(list[7], "")) as subject_novelty,
+                trim(coalesce(list[8], "")) as object_cui,
+                trim(coalesce(list[9], "")) as object_name,
+                trim(coalesce(list[10], "")) as object_semtype,
+                trim(coalesce(list[11], "")) as object_novelty',
+        'CREATE (p:Predication {
+            predication_id: predication_id,
+            sentence_id: sentence_id,
+            pmid: pmid,
+            predicate: predicate,
+            subject_cui: subject_cui,
+            subject_name: subject_name,
+            subject_semtype: subject_semtype,
+            subject_novelty: subject_novelty,
+            object_cui: object_cui,
+            object_name: object_name,
+            object_semtype: object_semtype,
+            object_novelty: object_novelty
+        })',
+        {
+            batchSize: $batchSize, 
+            iterateList: true, 
+            parallel: false,
+            params: {file: $file}
+        }
+    )
+    """
+        
+        # Step 2: Update predications with auxiliary information
+        update_predications_query = """
+        CALL apoc.periodic.iterate(
+            'CALL apoc.load.csv($file, {separator:",", header:false}) YIELD list 
+            RETURN 
+                    trim(list[0]) as aux_id,
+                    trim(list[1]) as predication_id,
+                    trim(list[2]) as subject_text,
+                    trim(list[3]) as subject_dist,
+                    trim(list[4]) as subject_maxdist,
+                    trim(list[5]) as subject_start_index,
+                    trim(list[6]) as subject_end_index,
+                    trim(list[7]) as subject_score,
+                    trim(list[8]) as indicator_type,
+                    trim(list[9]) as predicate_start_index,
+                    trim(list[10]) as predicate_end_index,
+                    trim(list[11]) as object_text,
+                    trim(list[12]) as object_dist,
+                    trim(list[13]) as object_maxdist,
+                    trim(list[14]) as object_start_index,
+                    trim(list[15]) as object_end_index,
+                    trim(list[16]) as object_score',
+            'MATCH (p:Predication {predication_id: predication_id})
+            SET p += {
+                aux_id: aux_id,
+                subject_text: subject_text,
+                subject_dist: subject_dist,
+                subject_maxdist: subject_maxdist,
+                subject_start_index: subject_start_index,
+                subject_end_index: subject_end_index,
+                subject_score: subject_score,
+                indicator_type: indicator_type,
+                predicate_start_index: predicate_start_index,
+                predicate_end_index: predicate_end_index,
+                object_text: object_text,
+                object_dist: object_dist,
+                object_maxdist: object_maxdist,
+                object_start_index: object_start_index,
+                object_end_index: object_end_index,
+                object_score: object_score
+            }',
+            {
+                batchSize: $batchSize, 
+                iterateList: true, 
+                parallel: false, 
+                params: {file: $file}
+            }
+        )
+        """
+        
+        with self.driver.session() as session:
+            # Step 1: Create predication nodes
+            self.logger.info("Creating predication nodes...")
+            session.run(create_predications_query, 
+                    file=Config.PREDICATIONS_FILE, 
+                    batchSize=Config.PREDICATION_BATCH_SIZE)
+            count = self.get_node_count("Predication")
+            self.logger.info(f"Created {count} predication nodes")
+            
+            # Step 2: Update with auxiliary information
+            self.logger.info("Updating predications with auxiliary information...")
+            session.run(update_predications_query, 
+                    file=Config.PREDICATION_AUX_FILE, 
+                    batchSize=Config.PREDICATION_BATCH_SIZE)
+            self.logger.info("Finished updating predications")
             
     def load_entities(self):
         query = """
@@ -242,14 +351,14 @@ def main():
         connector.logger.info("Creating constraints...")
         connector.create_constraints()
 
-        # Load nodes
+        # # Load nodes
         connector.logger.info("Loading Citations...")
         connector.load_citations()
         
-        connector.logger.info("Loading Sentences...")
+        # connector.logger.info("Loading Sentences...")
         connector.load_sentences()
         
-        connector.logger.info("Loading Entities...")
+        # connector.logger.info("Loading Entities...")
         connector.load_entities()
         
         connector.logger.info("Loading Predications...")

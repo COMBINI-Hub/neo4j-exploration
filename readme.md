@@ -1,5 +1,11 @@
 # SemMedDB Neo4j Data Pipeline
 
+![alt text](image.png)
+
+    Neo4jLoader - INFO - === Final Database Statistics ===
+    Neo4jLoader - INFO - Total nodes: 2214094641
+    Neo4jLoader - INFO - Total relationships: 451458585
+
 ## Overview
 A data pipeline for loading and analyzing SemMedDB (Semantic MEDLINE Database) data into Neo4j. This project processes biomedical semantic predications from PubMed literature and creates a graph database for analysis.
 
