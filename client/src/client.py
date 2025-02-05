@@ -1,6 +1,18 @@
 from neo4j import GraphDatabase
 import logging
 import time
+import argparse  
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Load data into Neo4j database')
+    parser.add_argument('--constraints', action='store_true', help='Create constraints and indexes')
+    parser.add_argument('--citations', action='store_true', help='Load citations')
+    parser.add_argument('--sentences', action='store_true', help='Load sentences')
+    parser.add_argument('--entities', action='store_true', help='Load entities')
+    parser.add_argument('--predications', action='store_true', help='Load predications')
+    parser.add_argument('--relationships', action='store_true', help='Create relationships')
+    parser.add_argument('--all', action='store_true', help='Load everything')
+    return parser.parse_args()
 
 # Configuration
 class Config:
@@ -265,6 +277,7 @@ class Neo4jConnector:
             YIELD list 
             RETURN trim(list[0]) as entity_id,
                    trim(list[1]) as sentence_id,
+                   trim(list[1]) as pmid,
                    trim(list[2]) as cui,
                    trim(list[3]) as name,
                    trim(list[4]) as type,
@@ -276,6 +289,7 @@ class Neo4jConnector:
                    trim(list[10]) as score',
             'CREATE (e:Entity {
                 entity_id: entity_id,
+                pmid: pmid,
                 sentence_id: sentence_id,
                 cui: cui,
                 name: name,
@@ -343,30 +357,36 @@ class Neo4jConnector:
 def main():
     # Initialize connection
     uri = "neo4j://localhost:7687"
-    
     connector = Neo4jConnector(uri)
+    args = parse_args()
     
     try:
-        # Create constraints
-        connector.logger.info("Creating constraints...")
-        connector.create_constraints()
+        run_all = args.all or not any([args.constraints, args.citations, args.sentences, 
+                                     args.entities, args.predications, args.relationships])
 
-        # # Load nodes
-        connector.logger.info("Loading Citations...")
-        connector.load_citations()
-        
-        # connector.logger.info("Loading Sentences...")
-        connector.load_sentences()
-        
-        # connector.logger.info("Loading Entities...")
-        connector.load_entities()
-        
-        connector.logger.info("Loading Predications...")
-        connector.load_predications()
+        if run_all or args.constraints:
+            connector.logger.info("Creating constraints...")
+            connector.create_constraints()
 
-        # Create relationships
-        connector.logger.info("Creating relationships...")
-        connector.create_relationships()
+        if run_all or args.citations:
+            connector.logger.info("Loading Citations...")
+            connector.load_citations()
+        
+        if run_all or args.sentences:
+            connector.logger.info("Loading Sentences...")
+            connector.load_sentences()
+        
+        if run_all or args.entities:
+            connector.logger.info("Loading Entities...")
+            connector.load_entities()
+        
+        if run_all or args.predications:
+            connector.logger.info("Loading Predications...")
+            connector.load_predications()
+
+        if run_all or args.relationships:
+            connector.logger.info("Creating relationships...")
+            connector.create_relationships()
         
         # Log final statistics
         connector.logger.info("=== Final Database Statistics ===")
