@@ -1,1 +1,0 @@
-:START_ID(Entity),predicate_relation,:END_ID(Entity),predication_id:ID(Predication),sentence_id:ID(Sentence),pmid:ID(Citation),subject_novelty:int,object_novelty:int,subject_cui,subject_name,subject_semtype,subject_gene_id,subject_gene_name,subject_text,predicate_aux,object_cui,object_name,object_semtype,object_gene_id,object_gene_name,object_text

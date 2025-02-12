@@ -18,7 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code and data
 COPY src/ .
-COPY demo_data/ /import/
+
+# Create mount point for data
+RUN mkdir -p /app/data
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

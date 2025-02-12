@@ -1,1 +1,0 @@
-id:ID(Sentence),pmid:ID(Citation),type,number,sent_start_index:int,sent_end_index:int,section_header,normalized_section_header,sentence
