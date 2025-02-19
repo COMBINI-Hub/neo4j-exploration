@@ -3,3 +3,6 @@
 *.whl
 .vscode
 /semmed_data
+/exports
+/notworking
+.env

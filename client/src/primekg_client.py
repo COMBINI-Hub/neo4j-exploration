@@ -3,6 +3,25 @@ import logging
 import argparse
 import os
 
+# Total relationships: 8100498
+# Total unique nodes: 129375
+# Unique node types: ['gene/protein' 'drug' 'effect/phenotype' 'disease' 'biological_process'
+#  'molecular_function' 'cellular_component' 'exposure' 'pathway' 'anatomy']
+
+# Verification counts by node type:
+# node_type
+# biological_process    28642
+# gene/protein          27671
+# disease               17080
+# effect/phenotype      15311
+# anatomy               14035
+# molecular_function    11169
+# drug                   7957
+# cellular_component     4176
+# pathway                2516
+# exposure                818
+# Name: count, dtype: int64
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Load PrimeKG data into Neo4j database')
     parser.add_argument('--constraints', action='store_true', help='Create constraints and indexes')
@@ -95,48 +114,42 @@ class Neo4jConnector:
         # First pass: Create unique nodes
         create_nodes_query = """
             CALL apoc.periodic.iterate(
-            "LOAD CSV WITH HEADERS FROM $file AS row RETURN row",
-            "CALL {
-                WITH row
-                WITH row,
-                CASE row.x_type 
-                    WHEN 'gene/protein' THEN 'Protein'
-                    WHEN 'drug' THEN 'Drug'
-                    ELSE null
-                END as x_label,
-                CASE row.y_type
-                    WHEN 'gene/protein' THEN 'Protein'
-                    WHEN 'disease' THEN 'Disease'
-                    ELSE null
-                END as y_label
-                WHERE x_label IS NOT NULL OR y_label IS NOT NULL
-                
-                // Create x_node if type exists
-                FOREACH (dummy IN CASE WHEN x_label = 'Protein' THEN [1] ELSE [] END |
-                    MERGE (x:Protein {id: row.x_id})
-                    SET x.name = row.x_name,
-                        x.source = row.x_source
-                )
-                FOREACH (dummy IN CASE WHEN x_label = 'Drug' THEN [1] ELSE [] END |
-                    MERGE (x:Drug {id: row.x_id})
-                    SET x.name = row.x_name,
-                        x.source = row.x_source
-                )
-                
-                // Create y_node if type exists
-                FOREACH (dummy IN CASE WHEN y_label = 'Protein' THEN [1] ELSE [] END |
-                    MERGE (y:Protein {id: row.y_id})
-                    SET y.name = row.y_name,
-                        y.source = row.y_source
-                )
-                FOREACH (dummy IN CASE WHEN y_label = 'Disease' THEN [1] ELSE [] END |
-                    MERGE (y:Disease {id: row.y_id})
-                    SET y.name = row.y_name,
-                        y.source = row.y_source
-                )
-            }",
-            {batchSize: $batchSize, parallel: false}
-            );
+"LOAD CSV WITH HEADERS FROM 'file:///unique_nodes.csv' AS row RETURN row",
+"CALL {
+    WITH row
+    FOREACH (dummy IN CASE WHEN row.node_type = 'gene/protein' THEN [1] ELSE [] END |
+        CREATE (n:GeneProtein {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'biological_process' THEN [1] ELSE [] END |
+        CREATE (n:BiologicalProcess {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'disease' THEN [1] ELSE [] END |
+        CREATE (n:Disease {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'effect/phenotype' THEN [1] ELSE [] END |
+        CREATE (n:Phenotype {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'anatomy' THEN [1] ELSE [] END |
+        CREATE (n:Anatomy {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'molecular_function' THEN [1] ELSE [] END |
+        CREATE (n:MolecularFunction {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'drug' THEN [1] ELSE [] END |
+        CREATE (n:Drug {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'cellular_component' THEN [1] ELSE [] END |
+        CREATE (n:CellularComponent {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'pathway' THEN [1] ELSE [] END |
+        CREATE (n:Pathway {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+    FOREACH (dummy IN CASE WHEN row.node_type = 'exposure' THEN [1] ELSE [] END |
+        CREATE (n:Exposure {id: row.node_id, name: row.node_name, index: toInteger(row.index)})
+    )
+}",
+{batchSize: 1000, parallel: false}
+);
         """
         
         with self.driver.session() as session:
