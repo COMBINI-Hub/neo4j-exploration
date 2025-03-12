@@ -1,81 +1,75 @@
-# SemMedDB Neo4j Data Pipeline
+# Neo4j KGs
 
-![alt text](image.png)
+![alt text](primekg.png)
 
     Neo4jLoader - INFO - === Final Database Statistics ===
-    Neo4jLoader - INFO - Total nodes: 2214094641
-    Neo4jLoader - INFO - Total relationships: 451458585
+    Neo4jLoader - INFO - Total nodes: 129375
+    Neo4jLoader - INFO - Total relationships: 8100498
 
 ## Overview
-A data pipeline for loading and analyzing SemMedDB (Semantic MEDLINE Database) data into Neo4j. This project processes biomedical semantic predications from PubMed literature and creates a graph database for analysis.
+The goal of this repository is to provide the scripts and data downloads required to load popular KGs in Neo4j. This project currently supports two knowledge graphs:
+1. SemMedDB (Semantic MEDLINE Database) - Processing biomedical semantic predications from PubMed literature. 
+2. PrimeKG - A comprehensive, high-quality biomedical knowledge graph containing diseases and biological scales. 
 
 ## Features
-- Automated data loading from CSV/SQL sources
-- Configurable batch processing
-- Relationship creation between entities
-- Memory-optimized for large datasets
-- Docker containerization
-- Progress logging and error handling
+- Automated data loading via shell scripts and pre-processed CSV files
+- Docker containerization for easy deployment
+- Support for large-scale knowledge graphs
+- Optimized import process for Neo4j
 
 ## Prerequisites
 - Docker and Docker Compose
-- Python 3.x
-- Neo4j APOC plugin
+- Neo4j APOC plugin (automatically installed via Docker)
 
-## Data Source
-The data is sourced from the National Library of Medicine's (NLM) Semantic Knowledge Representation (SKR) project:
-- Source: [SemRep/SemMedDB](https://lhncbc.nlm.nih.gov/ii/tools/SemRep_SemMedDB_SKR/dbinfo.html)
-- Database: SemMedDB
-- Version: Latest public release
+## Available Knowledge Graphs
 
-## Data Requirements
-Place your data files in the appropriate directories:
-```bash
-    data/
-    ├── entity.gz
-    ├── citations.csv
-    ├── predication.csv
-    ├── predication_aux.csv
-    └── sentence.csv
-```
+### PrimeKG
+PrimeKG is currently available and ready for import. To use PrimeKG:
+
+1. Download the pre-processed CSV files from our Box folder. 
+2. Place the files in the `data/` directory:
+   ```
+   data/
+   ├── unique_nodes.csv
+   └── unique_edges.csv
+   ```
+3. Run the import script (see Installation section)
+
+### SemMedDB
+The SemMedDB knowledge graph integration is under development. When available, it will process data from the National Library of Medicine's (NLM) Semantic Knowledge Representation (SKR) project.
 
 ## Installation
 1. Clone the repository:
 ```bash
 git clone https://github.com/drshika/neo4j-exploration.git
 ```
-2. Install the required Python packages:
+
+2. Download the required data files and place them in the `data/` directory
+
+3. Run the import script to load the data into Neo4j:
 ```bash
-pip install -r requirements.txt
+./import_data.sh
 ```
-3. Configure environment:
-Edit the configuration in `Config` class (referenced in client.py, lines 6-22) to match your setup.
-4. Run the docker-compose file:
-```bash
-docker-compose up -d
-```  
-5. View the database at http://localhost:7474/browser/. 
+
+4. Access the Neo4j browser at http://localhost:7474/browser/
 
 ## Data Model
-The graph database consists of the following main nodes:
-- Citations
-- Sentences
-- Entities
-- Predications
+The graph database structure varies by knowledge graph:
 
-With relationships:
-- HAS_ENTITY
-- HAS_PREDICATION
-- BELONGS_TO_SAME_CITATION
+### PrimeKG
+- Nodes represent biomedical entities (genes, diseases, drugs, etc.)
+- Edges represent relationships between these entities
+- Detailed schema information is available in the PrimeKG documentation
 
 ## Acknowledgments
 - National Library of Medicine (NLM)
-- Semantic Knowledge Representation project team
-- SemRep and SemMedDB developers
+- PrimeKG development team
+- Neo4j community
 
 ## Contact
 For questions and support, please open an issue in the repository.
 
 ## References
 - [SemMedDB Documentation](https://lhncbc.nlm.nih.gov/ii/tools/SemRep_SemMedDB_SKR/dbinfo.html)
-- [NLM Semantic Knowledge Resources](https://www.nlm.nih.gov/)
+- [PrimeKG](https://github.com/mims-harvard/PrimeKG)
+- [Neo4j Documentation](https://neo4j.com/docs/)

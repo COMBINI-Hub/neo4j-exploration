@@ -1,3 +1,4 @@
+# This is an example of using LangChain to generate Cypher queries for PrimeKG. 
 from langchain_neo4j import GraphCypherQAChain, Neo4jGraph
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
