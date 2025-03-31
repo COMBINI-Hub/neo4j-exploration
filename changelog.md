@@ -1,5 +1,8 @@
 # Changelog
 
+## 3/31/2025
+- Pre-processing SemMedDB using Pandas. 
+
 ## 3/12/2025
 
 ### Data Import Process Improvement
