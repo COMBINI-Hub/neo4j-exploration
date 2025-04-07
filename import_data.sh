@@ -13,13 +13,28 @@ if docker-compose ps | grep -q "neo4j.*Up"; then
     exit 1
   fi
 
+  if ! docker-compose exec neo4j test -f /import/concept_header.csv; then
+    echo "Error: /import/concept_header.csv does not exist in the Neo4j container"
+    exit 1
+  fi
+
   if ! docker-compose exec neo4j test -f /import/predication.csv; then
     echo "Error: /import/predication.csv does not exist in the Neo4j container"
+    exit 1
+  fi
+
+  if ! docker-compose exec neo4j test -f /import/predication_header.csv; then
+    echo "Error: /import/predication_header.csv does not exist in the Neo4j container"
     exit 1
   fi
   
   if ! docker-compose exec neo4j test -f /import/connections.csv; then
     echo "Error: /import/connections.csv does not exist in the Neo4j container"
+    exit 1
+  fi
+
+  if ! docker-compose exec neo4j test -f /import/connections_header.csv; then
+    echo "Error: /import/connections_header.csv does not exist in the Neo4j container"
     exit 1
   fi
   
@@ -69,14 +84,14 @@ docker-compose stop neo4j
 
 # Run the import command
 echo "Importing data..."
-docker-compose run --rm neo4j neo4j-admin database import full \
-  --nodes=Concept=/import/concept.csv \
-  --nodes=Predication=/import/predication.csv \
-  --relationships=/import/connections.csv \
+docker-compose run --rm neo4j neo4j-admin database import full neo4j \
+  --nodes=/import/concept_header.csv,/import/concept.csv \
+  --nodes=/import/predication_header.csv,/import/predication.csv \
+  --relationships=/import/connections_header.csv,/import/connections.csv \
   --delimiter="," \
-  --array-delimiter="|" \
-  --id-type=STRING \
   --overwrite-destination=true \
+  --skip-bad-relationships
+  --verbose
   neo4j
 
 # Start Neo4j again

@@ -1,5 +1,14 @@
 # Changelog
 
+## 4/7/2025
+- SemmedDB Initial loading script with data zipfile working. This does not include the citations or sentences yet (as there are some design decisions nessecary)
+What worked:
+- Quoting each field
+- Creating a separate :LABEL col for each CSV (predication, concept)
+- Separating Headers from CSV for fast iteration without having to load/unload file buffers or Pandas Dataframes
+- Removing types from header (though this is probably temporary as types are helpful for search reasons)
+- Skipping bad relationships (was too hard to track down everything that didn't work, maybe I can make another pass with the python scripting?)
+
 ## 3/31/2025
 - Pre-processing SemMedDB using Pandas. 
 
