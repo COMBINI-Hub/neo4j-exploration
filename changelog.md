@@ -1,5 +1,10 @@
 # Changelog
 
+## 5/7/2025
+- Release SemMedDB
+    - Fixed issues with sentence CSV being formatted badly
+    - Added another col for counts on concepts since many duplicate connections were causing the graph to take forever to load. That was also unreadable. 
+
 ## 4/7/2025
 - SemmedDB Initial loading script with data zipfile working. This does not include the citations or sentences yet (as there are some design decisions nessecary)
 What worked:

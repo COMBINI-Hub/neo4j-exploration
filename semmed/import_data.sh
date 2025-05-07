@@ -85,12 +85,14 @@ docker-compose stop neo4j
 # Run the import command
 echo "Importing data..."
 docker-compose run --rm neo4j neo4j-admin database import full neo4j \
-  --nodes=/import/concept_header.csv,/import/concept.csv \
-  --nodes=/import/predication_header.csv,/import/predication.csv \
-  --relationships=/import/connections_header.csv,/import/connections.csv \
+  --nodes=/import/concept_header.csv,/import/concept.csv.gz \
+  --nodes=/import/predication_header.csv,/import/predication.csv.gz \
+  --nodes=/import/sentences_header.csv,/import/sentence.csv.gz \
+  --nodes=/import/citations_header.csv,/import/citations.csv.gz \
+  --relationships=/import/connections_header.csv,/import/connections.csv.gz,/import/connections_1.csv.gz,/import/connections_2.csv.gz \
   --delimiter="," \
   --overwrite-destination=true \
-  --skip-bad-relationships
+  --skip-bad-relationships \
   --verbose
   neo4j
 

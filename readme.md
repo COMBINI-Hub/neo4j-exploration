@@ -36,7 +36,32 @@ PrimeKG is currently available and ready for import. To use PrimeKG:
 3. Run the import script (see Installation section)
 
 ### SemMedDB
-The SemMedDB knowledge graph integration is under development. When available, it will process data from the National Library of Medicine's (NLM) Semantic Knowledge Representation (SKR) project.
+SemMedDB is currently available and ready for import. To use SemMedDB:
+
+1. Download the pre-processed CSV files from our Box folder (contact Drshika for access)
+2. Place the files in the `data/` directory:
+   ```
+   data/
+   ├── concept.csv.gz
+   ├── concept_header.csv
+   ├── predication.csv.gz
+   ├── predication_header.csv
+   ├── connections.csv.gz
+   ├── connections_header.csv
+   ├── connections_1.csv.gz
+   ├── connections_2.csv.gz
+   ├── sentence.csv.gz
+   ├── sentences_header.csv
+   ├── citations.csv.gz
+   └── citations_header.csv
+   ```
+3. Run the import script (see Installation section)
+
+The SemMedDB knowledge graph contains semantic predications extracted from biomedical literature, including:
+- Medical concepts (diseases, drugs, procedures, etc.)
+- Semantic relationships between concepts
+- Citations linking to source literature
+- Sentence-level context for each predication
 
 ## Installation
 1. Clone the repository:
