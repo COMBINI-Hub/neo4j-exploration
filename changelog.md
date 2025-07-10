@@ -1,5 +1,11 @@
 # Changelog
 
+## 5/8/2025
+- Release iKraph
+    - Had to do a bunch of relationship debugging as there were over 1k pubmed relationships that didn't exist. 
+    - There's still 1100ish invalid relationships because the bioKDE ids don't exist. 
+    - Added a utility that zips up all the CSVs for easy import
+
 ## 5/7/2025
 - Release SemMedDB
     - Fixed issues with sentence CSV being formatted badly

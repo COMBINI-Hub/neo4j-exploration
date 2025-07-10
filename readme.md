@@ -2,14 +2,22 @@
 
 ![alt text](primekg.png)
 
-    Neo4jLoader - INFO - === Final Database Statistics ===
+    Neo4jLoader - INFO - === PrimeKG Final Database Statistics ===
     Neo4jLoader - INFO - Total nodes: 129375
     Neo4jLoader - INFO - Total relationships: 8100498
 
 ## Overview
-The goal of this repository is to provide the scripts and data downloads required to load popular KGs in Neo4j. This project currently supports two knowledge graphs:
+The goal of this repository is to provide the scripts and data downloads required to load popular KGs in Neo4j. This project currently supports three knowledge graphs:
 1. SemMedDB (Semantic MEDLINE Database) - Processing biomedical semantic predications from PubMed literature. 
-2. PrimeKG - A comprehensive, high-quality biomedical knowledge graph containing diseases and biological scales. 
+2. PrimeKG - A comprehensive, high-quality biomedical knowledge graph containing diseases and biological scales.
+3. iKraph - A comprehensive biomedical knowledge graph integrating PubMed literature and external database relationships. 
+
+## Data Downloads
+Download the pre-processed data files from our Box folders:
+
+- **SemMedDB**: [Download from Box](https://uofi.box.com/s/fz67gvfri2iopunh71dn4vamigx08k9k)
+- **PrimeKG**: [Download from Box](https://uofi.box.com/s/uw7sppna81lqvmlr5s6clht438ityf0i)
+- **iKraph**: [Download from Box](https://uofi.box.com/s/d2b2wdnm3vg54fa24wx0tj3yjt9dw8h6)
 
 ## Features
 - Automated data loading via shell scripts and pre-processed CSV files
@@ -38,7 +46,7 @@ PrimeKG is currently available and ready for import. To use PrimeKG:
 ### SemMedDB
 SemMedDB is currently available and ready for import. To use SemMedDB:
 
-1. Download the pre-processed CSV files from our Box folder (contact Drshika for access)
+1. Download the pre-processed CSV files from our Box folder
 2. Place the files in the `data/` directory:
    ```
    data/
@@ -63,13 +71,37 @@ The SemMedDB knowledge graph contains semantic predications extracted from biome
 - Citations linking to source literature
 - Sentence-level context for each predication
 
+### iKraph
+iKraph is currently available and ready for import. To use iKraph:
+
+1. Download the compressed CSV files from our Box folder
+2. Place the files in the `iKraph/import/` directory:
+   ```
+   iKraph/import/
+   ├── nodes_*.csv.gz        # 12 node files
+   └── relationships_*.csv.gz # 2 relationship files
+   ```
+3. Run the import script:
+   ```bash
+   cd iKraph
+   ./docker_import.sh  # For Docker method
+   ```
+
+The iKraph knowledge graph integrates biomedical data from multiple sources, including:
+- Biomedical entities (genes, diseases, chemicals, etc.)
+- PubMed literature relationships with scores and probabilities
+- External database relationships with source information
+- Rich metadata for entity identification and classification
+
+**For detailed iKraph documentation, see [iKraph/README_IMPORT.md](iKraph/README_IMPORT.md)**
+
 ## Installation
 1. Clone the repository:
 ```bash
 git clone https://github.com/drshika/neo4j-exploration.git
 ```
 
-2. Download the required data files and place them in the `data/` directory
+2. Download the required data files and place them in the appropriate directories
 
 3. Run the import script to load the data into Neo4j:
 ```bash
@@ -98,3 +130,6 @@ For questions and support, please open an issue in the repository.
 - [SemMedDB Documentation](https://lhncbc.nlm.nih.gov/ii/tools/SemRep_SemMedDB_SKR/dbinfo.html)
 - [PrimeKG](https://github.com/mims-harvard/PrimeKG)
 - [Neo4j Documentation](https://neo4j.com/docs/)
+
+## Changelog
+See [changelog.md](changelog.md) for detailed project history and updates.

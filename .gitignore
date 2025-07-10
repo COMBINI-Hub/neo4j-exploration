@@ -8,3 +8,7 @@
 .env
 /charts
 /primekg_data
+/semmed_data_raw
+/iKraph_raw
+/neo4j_import
+/iKraph_data
