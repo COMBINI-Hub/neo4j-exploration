@@ -1,0 +1,42 @@
+# This docker-compose.yml is intended to be referenced from scripts using an absolute path.
+services:
+  neo4j-bioportal:
+    image: neo4j:2025.03.0
+    container_name: neo4j-bioportal
+    ports:
+      - "7475:7474"  # HTTP (host:container)
+      - "7688:7687"  # Bolt (host:container)
+    volumes:
+      - ./import:/var/lib/neo4j/import:ro
+      - neo4j_bioportal_data:/data
+      - neo4j_bioportal_logs:/logs
+    environment:
+      - NEO4J_AUTH=none
+      - NEO4J_PLUGINS=["apoc", "apoc-extended"]
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,apoc-extended.*
+      - NEO4J_server_memory_heap_initial__size=16G
+      - NEO4J_server_memory_heap_max__size=16G
+      - NEO4J_server_memory_pagecache_size=16G
+      - NEO4J_dbms_memory_heap_initial__size=16G
+      - NEO4J_dbms_memory_heap_max__size=16G
+      - NEO4J_dbms_memory_pagecache_size=16G
+      - NEO4J_initial_dbms_default__database=bioportal
+    user: "7474:7474"  # neo4j user and group
+    ulimits:
+      nofile:
+        soft: 40000
+        hard: 40000
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  neo4j_bioportal_data:
+    driver: local
+  neo4j_bioportal_logs:
+    driver: local 

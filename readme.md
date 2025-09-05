@@ -7,10 +7,11 @@
     Neo4jLoader - INFO - Total relationships: 8100498
 
 ## Overview
-The goal of this repository is to provide the scripts and data downloads required to load popular KGs in Neo4j. This project currently supports three knowledge graphs:
+The goal of this repository is to provide the scripts and data downloads required to load popular KGs in Neo4j. This project currently supports four knowledge graphs:
 1. SemMedDB (Semantic MEDLINE Database) - Processing biomedical semantic predications from PubMed literature. 
 2. PrimeKG - A comprehensive, high-quality biomedical knowledge graph containing diseases and biological scales.
 3. iKraph - A comprehensive biomedical knowledge graph integrating PubMed literature and external database relationships. 
+4. KG-Bioportal - A comprehensive biomedical knowledge graph integrating data from multiple ontologies and databases. 
 
 ## Data Downloads
 Download the pre-processed data files from our Box folders:
@@ -95,6 +96,38 @@ The iKraph knowledge graph integrates biomedical data from multiple sources, inc
 
 **For detailed iKraph documentation, see [iKraph/README_IMPORT.md](iKraph/README_IMPORT.md)**
 
+### KG-Bioportal
+KG-Bioportal is currently available and ready for import. To use KG-Bioportal:
+
+1. Navigate to the bioportal directory:
+   ```bash
+   cd bioportal
+   ```
+
+2. Run the setup script to process the data:
+   ```bash
+   ./setup.sh
+   ```
+
+3. Import the data into Neo4j:
+   ```bash
+   ./import_data.sh
+   ```
+
+4. Use the client to explore the data:
+   ```bash
+   python3 bioportal_client.py --stats
+   python3 bioportal_client.py --search 'Alzheimer'
+   ```
+
+The KG-Bioportal knowledge graph integrates data from multiple biomedical ontologies and databases, including:
+- Biomedical entities (diseases, drugs, genes, phenotypes, etc.)
+- Ontological relationships and hierarchies
+- Cross-references between different biomedical databases
+- Rich metadata and annotations from multiple sources
+
+**For detailed KG-Bioportal documentation, see [bioportal/README.md](bioportal/README.md)**
+
 ## Installation
 1. Clone the repository:
 ```bash
@@ -129,6 +162,7 @@ For questions and support, please open an issue in the repository.
 ## References
 - [SemMedDB Documentation](https://lhncbc.nlm.nih.gov/ii/tools/SemRep_SemMedDB_SKR/dbinfo.html)
 - [PrimeKG](https://github.com/mims-harvard/PrimeKG)
+- [KG-Bioportal Documentation](https://ncbo.github.io/kg-bioportal/)
 - [Neo4j Documentation](https://neo4j.com/docs/)
 
 ## Changelog
